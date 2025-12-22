@@ -108,3 +108,24 @@ class FunctionAnalyzer:
             file_path=file_path,
             local_variables=self._extract_local_variables(func_def),
         )
+
+    def _find_function_def(
+        self, tree: ast.AST, name: str
+    ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        """Find the function definition in AST.
+
+        Handles decorators by looking at the actual function name,
+        not the decorator chain.
+
+        Args:
+            tree: Parsed AST tree
+            name: Function name to find
+
+        Returns:
+            Function definition node or None if not found
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name == name:
+                    return node
+        return None
