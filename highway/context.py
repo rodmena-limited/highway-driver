@@ -20,3 +20,8 @@ class ExecutionContext:
 
 class _ContextMeta(type):
     """Metaclass to enable property-like access on Context class."""
+
+    def workflow_id(cls) -> str | None:
+        """Get the current workflow ID (if set via driver.run(workflow_id=...))."""
+        ctx = _context.get()
+        return ctx.workflow_id if ctx else None
