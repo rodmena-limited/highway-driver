@@ -60,3 +60,18 @@ class Context(metaclass=_ContextMeta):
             print("Attempt:", Context.attempt)
             return {"context_test": True}
     """
+
+    def get(cls, key: str, default: Any = None) -> Any:
+        """Get a specific output from a dependency task.
+
+        Args:
+            key: The task name to get output from
+            default: Default value if not found
+
+        Returns:
+            The task output or default
+        """
+        outputs = cls.outputs
+        if outputs is None:
+            return default
+        return outputs.get(key, default)
