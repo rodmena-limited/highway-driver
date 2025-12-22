@@ -40,3 +40,23 @@ class _ContextMeta(type):
         """Get outputs from completed dependency tasks."""
         ctx = _context.get()
         return ctx.outputs if ctx else None
+
+class Context(metaclass=_ContextMeta):
+    """Access execution context within tasks.
+
+    This class provides a static interface for tasks to access
+    information about the current execution environment.
+
+    All properties are read-only and return None if accessed
+    outside of task execution.
+
+    Example:
+        from highway import Context
+
+        @driver.task(py=True)
+        def my_task():
+            print("Workflow:", Context.workflow_id)
+            print("Task:", Context.task_name)
+            print("Attempt:", Context.attempt)
+            return {"context_test": True}
+    """
