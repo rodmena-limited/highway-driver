@@ -59,3 +59,52 @@ class FunctionAnalyzer:
         print(analysis.imports)  # []
         print(analysis.name)     # "my_task"
     """
+
+    def analyze(self, func: Callable[..., Any]) -> FunctionAnalysis:
+        """Extract all metadata from function using AST.
+
+        Args:
+            func: The function to analyze
+
+        Returns:
+            FunctionAnalysis with all extracted metadata
+
+        Raises:
+            ValueError: If function source cannot be parsed
+        """
+        try:
+            source = inspect.getsource(func)
+        except (OSError, TypeError) as e:
+            raise ValueError("Cannot get source for function '%s': %s" % (func.__name__, e))
+
+        # Dedent to handle nested functions or class methods
+        source = textwrap.dedent(source)
+
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as e:
+            raise ValueError("Cannot parse source for function '%s': %s" % (func.__name__, e))
+
+        func_def = self._find_function_def(tree, func.__name__)
+        if func_def is None:
+            raise ValueError(
+                "Could not find function definition for '%s' in parsed AST" % func.__name__
+            )
+
+        try:
+            file_path = inspect.getfile(func)
+        except (OSError, TypeError):
+            file_path = "<unknown>"
+
+        return FunctionAnalysis(
+            name=func.__name__,
+            source=source,
+            imports=self._extract_imports(func_def),
+            parameters=self._extract_parameters(func_def),
+            return_annotation=self._extract_return_annotation(func_def),
+            docstring=ast.get_docstring(func_def),
+            is_async=isinstance(func_def, ast.AsyncFunctionDef),
+            line_number=func_def.lineno,
+            file_path=file_path,
+            local_variables=self._extract_local_variables(func_def),
+        )
