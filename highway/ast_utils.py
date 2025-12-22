@@ -129,3 +129,31 @@ class FunctionAnalyzer:
                 if node.name == name:
                     return node
         return None
+
+    def _extract_imports(self, func_def: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+        """Extract import statements from function body.
+
+        Only extracts imports INSIDE the function body, not module-level.
+        Returns top-level package names only (e.g., 'os' from 'os.path').
+
+        Args:
+            func_def: Function definition node
+
+        Returns:
+            List of imported module names (deduplicated)
+        """
+        imports: set[str] = set()
+
+        for node in ast.walk(func_def):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    # Get top-level package only
+                    top_level = alias.name.split(".")[0]
+                    imports.add(top_level)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    # Get top-level package only
+                    top_level = node.module.split(".")[0]
+                    imports.add(top_level)
+
+        return sorted(imports)
