@@ -25,3 +25,8 @@ class _ContextMeta(type):
         """Get the current workflow ID (if set via driver.run(workflow_id=...))."""
         ctx = _context.get()
         return ctx.workflow_id if ctx else None
+
+    def task_name(cls) -> str | None:
+        """Get the name of the currently executing task."""
+        ctx = _context.get()
+        return ctx.task_name if ctx else None
