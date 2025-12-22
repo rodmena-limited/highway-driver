@@ -1,11 +1,18 @@
+"""AST-based function analysis utilities.
+
+This module provides enterprise-grade AST analysis of Python functions
+decorated with @driver.task(). No string hacks - pure AST parsing.
+"""
+
 from __future__ import annotations
+
 import ast
 import inspect
 import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-_analyzer = FunctionAnalyzer()
+
 
 @dataclass
 class FunctionAnalysis:
@@ -26,6 +33,7 @@ class FunctionAnalysis:
         file_path: Path to source file
         local_variables: Variables assigned in function body
     """
+
     name: str
     source: str
     imports: list[str] = field(default_factory=list)
@@ -34,8 +42,9 @@ class FunctionAnalysis:
     docstring: str | None = None
     is_async: bool = False
     line_number: int = 0
-    file_path: str = ''
+    file_path: str = ""
     local_variables: list[str] = field(default_factory=list)
+
 
 class FunctionAnalyzer:
     """Enterprise-grade AST analysis of Python functions.
@@ -226,3 +235,21 @@ class FunctionAnalyzer:
                     variables.add(node.target.id)
 
         return sorted(variables)
+
+
+# Module-level singleton for convenience
+_analyzer = FunctionAnalyzer()
+
+
+def analyze_function(func: Callable[..., Any]) -> FunctionAnalysis:
+    """Analyze a function using the module-level analyzer.
+
+    Convenience function for one-off analysis.
+
+    Args:
+        func: Function to analyze
+
+    Returns:
+        FunctionAnalysis with extracted metadata
+    """
+    return _analyzer.analyze(func)
