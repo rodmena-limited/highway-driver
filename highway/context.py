@@ -35,3 +35,8 @@ class _ContextMeta(type):
         """Get the current attempt number (1-indexed)."""
         ctx = _context.get()
         return ctx.attempt if ctx else 1
+
+    def outputs(cls) -> dict[str, Any] | None:
+        """Get outputs from completed dependency tasks."""
+        ctx = _context.get()
+        return ctx.outputs if ctx else None
