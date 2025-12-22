@@ -181,3 +181,18 @@ class FunctionAnalyzer:
             params.append("**%s" % func_def.args.kwarg.arg)
 
         return params
+
+    def _extract_return_annotation(
+        self, func_def: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> str | None:
+        """Extract return type annotation if present.
+
+        Args:
+            func_def: Function definition node
+
+        Returns:
+            Return annotation as string, or None if not annotated
+        """
+        if func_def.returns:
+            return ast.unparse(func_def.returns)
+        return None
