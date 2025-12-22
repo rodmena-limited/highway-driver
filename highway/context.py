@@ -6,6 +6,31 @@ _context: ContextVar[ExecutionContext | None] = ContextVar(
     "highway_execution_context", default=None
 )
 
+def set_context(
+    workflow_id: str | None = None,
+    task_name: str | None = None,
+    attempt: int = 1,
+    outputs: dict[str, Any] | None = None,
+) -> Any:
+    """Set execution context (internal use).
+
+    Args:
+        workflow_id: Current workflow ID
+        task_name: Current task name
+        attempt: Current attempt number
+        outputs: Outputs from completed dependencies
+
+    Returns:
+        Token for resetting context
+    """
+    ctx = ExecutionContext(
+        workflow_id=workflow_id,
+        task_name=task_name,
+        attempt=attempt,
+        outputs=outputs,
+    )
+    return _context.set(ctx)
+
 @dataclass
 class ExecutionContext:
     """Internal execution context data.
