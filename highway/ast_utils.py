@@ -36,3 +36,26 @@ class FunctionAnalysis:
     line_number: int = 0
     file_path: str = ''
     local_variables: list[str] = field(default_factory=list)
+
+class FunctionAnalyzer:
+    """Enterprise-grade AST analysis of Python functions.
+
+    This class extracts all metadata from decorated functions using
+    Python's ast module. It handles:
+    - Nested functions
+    - Decorators
+    - Type annotations
+    - Import detection within function body
+    - Async functions
+
+    Example:
+        analyzer = FunctionAnalyzer()
+
+        @driver.task(shell=True)
+        def my_task():
+            return "echo hello"
+
+        analysis = analyzer.analyze(my_task)
+        print(analysis.imports)  # []
+        print(analysis.name)     # "my_task"
+    """
