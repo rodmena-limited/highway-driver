@@ -30,3 +30,8 @@ class _ContextMeta(type):
         """Get the name of the currently executing task."""
         ctx = _context.get()
         return ctx.task_name if ctx else None
+
+    def attempt(cls) -> int:
+        """Get the current attempt number (1-indexed)."""
+        ctx = _context.get()
+        return ctx.attempt if ctx else 1
