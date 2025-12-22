@@ -196,3 +196,33 @@ class FunctionAnalyzer:
         if func_def.returns:
             return ast.unparse(func_def.returns)
         return None
+
+    def _extract_local_variables(
+        self, func_def: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> list[str]:
+        """Extract variable names assigned in function body.
+
+        Useful for understanding function structure.
+
+        Args:
+            func_def: Function definition node
+
+        Returns:
+            List of variable names (deduplicated)
+        """
+        variables: set[str] = set()
+
+        for node in ast.walk(func_def):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        variables.add(target.id)
+                    elif isinstance(target, ast.Tuple):
+                        for elt in target.elts:
+                            if isinstance(elt, ast.Name):
+                                variables.add(elt.id)
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name):
+                    variables.add(node.target.id)
+
+        return sorted(variables)
