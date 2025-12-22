@@ -157,3 +157,27 @@ class FunctionAnalyzer:
                     imports.add(top_level)
 
         return sorted(imports)
+
+    def _extract_parameters(self, func_def: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+        """Extract parameter names from function signature.
+
+        Excludes 'self' and 'cls' for methods.
+
+        Args:
+            func_def: Function definition node
+
+        Returns:
+            List of parameter names
+        """
+        params = []
+        for arg in func_def.args.args:
+            if arg.arg not in ("self", "cls"):
+                params.append(arg.arg)
+
+        # Also include *args and **kwargs names if present
+        if func_def.args.vararg:
+            params.append("*%s" % func_def.args.vararg.arg)
+        if func_def.args.kwarg:
+            params.append("**%s" % func_def.args.kwarg.arg)
+
+        return params
