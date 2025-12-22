@@ -17,3 +17,6 @@ class ExecutionContext:
     task_name: str | None = None
     attempt: int = 1
     outputs: dict[str, Any] | None = None
+
+class _ContextMeta(type):
+    """Metaclass to enable property-like access on Context class."""
