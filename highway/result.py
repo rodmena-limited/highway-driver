@@ -1,21 +1,30 @@
+"""Workflow execution result dataclasses.
+
+These dataclasses represent the result of workflow execution
+on Highway via Stabilize orchestration.
+"""
+
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
+
 class WorkflowState(Enum):
     """State of a workflow execution."""
-    PENDING = 'pending'
-    SUBMITTED = 'submitted'
-    RUNNING = 'running'
-    SCHEDULED = 'scheduled'
-    SLEEPING = 'sleeping'
-    WAITING = 'waiting'
-    COMPLETED = 'completed'
-    FAILED = 'failed'
-    CANCELLED = 'cancelled'
-    TIMED_OUT = 'timed_out'
+
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    RUNNING = "running"
+    SCHEDULED = "scheduled"
+    SLEEPING = "sleeping"
+    WAITING = "waiting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
 
     def is_terminal(self) -> bool:
         """Check if this is a terminal state."""
@@ -25,6 +34,7 @@ class WorkflowState(Enum):
             WorkflowState.CANCELLED,
             WorkflowState.TIMED_OUT,
         )
+
 
 @dataclass
 class TaskResult:
@@ -41,6 +51,7 @@ class TaskResult:
         stderr: Standard error (for shell tasks)
         returncode: Exit code (for shell tasks)
     """
+
     name: str
     state: WorkflowState
     result: Any = None
@@ -54,6 +65,7 @@ class TaskResult:
     def is_success(self) -> bool:
         """Check if task completed successfully."""
         return self.state == WorkflowState.COMPLETED and self.error is None
+
 
 @dataclass
 class WorkflowResult:
@@ -70,9 +82,10 @@ class WorkflowResult:
         error: Error message if failed
         stabilize_execution_id: Stabilize orchestration execution ID
     """
+
     run_id: str | None = None
     workflow_id: str | None = None
-    status: str = 'pending'
+    status: str = "pending"
     state: WorkflowState = WorkflowState.PENDING
     tasks: dict[str, TaskResult] = field(default_factory=dict)
     started_at: datetime | None = None
@@ -103,6 +116,7 @@ class WorkflowResult:
         """Check if all tasks completed successfully."""
         return all(t.is_success() for t in self.tasks.values())
 
+
 @dataclass
 class WorkflowStatus:
     """Current status of a workflow (for observability).
@@ -118,6 +132,7 @@ class WorkflowStatus:
         completed_at: When workflow completed (if terminal)
         progress: Completion progress (0.0 to 1.0)
     """
+
     run_id: str
     state: WorkflowState
     current_task: str | None = None
@@ -125,3 +140,7 @@ class WorkflowStatus:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     progress: float = 0.0
+
+    def is_running(self) -> bool:
+        """Check if workflow is still running."""
+        return not self.state.is_terminal()
