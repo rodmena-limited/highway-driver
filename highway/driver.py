@@ -536,3 +536,125 @@ class Driver:
             return func
 
         return decorator
+
+    def run(
+        self,
+        wait: bool = True,
+        timeout: float = 300,
+        workflow_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> WorkflowResult:
+        """Execute all registered tasks as a workflow.
+
+        All execution goes through Stabilize -> Highway API.
+
+        Args:
+            wait: If True, wait for completion. If False, return immediately
+                  with run_id for async polling.
+            timeout: Maximum time to wait for completion in seconds
+            workflow_id: Custom workflow ID for idempotency. If the same
+                        workflow_id is used for multiple runs, Highway will
+                        return the existing workflow instead of creating a new one.
+                        If not provided, a unique ID is generated.
+            inputs: Workflow input variables. These are available in tasks via
+                   {{inputs.key}} syntax. Example: inputs={"email": "user@example.com"}
+
+        Returns:
+            WorkflowResult with execution status and task results
+
+        Raises:
+            ConfigurationError: If API key is missing
+            TaskDefinitionError: If no tasks registered or invalid dependencies
+
+        Example:
+            # Idempotent execution - same workflow_id returns same result
+            result1 = driver.run(workflow_id="order-12345")
+            result2 = driver.run(workflow_id="order-12345")  # Returns cached result
+        """
+        if not self._tasks:
+            raise TaskDefinitionError("No tasks registered. Use @driver.task()")
+
+        # Validate all dependencies exist
+        task_names = set(self._tasks.keys())
+        for task in self._tasks.values():
+            errors = task.validate_depends(task_names)
+            if errors:
+                raise TaskDefinitionError("; ".join(errors))
+
+        return self._run_via_stabilize(
+            wait=wait, timeout=timeout, workflow_id=workflow_id, inputs=inputs
+        )
+
+    def _run_via_stabilize(
+        self,
+        wait: bool = True,
+        timeout: float = 300,
+        workflow_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> WorkflowResult:
+        """Execute tasks via Stabilize orchestration layer.
+
+        Flow:
+        1. Build Highway workflow JSON from registered tasks
+        2. If durable tasks exist, package functions and create multi-stage workflow
+        3. Stabilize's HighwayTask submits to Highway API
+        4. Stabilize polls and manages state
+        5. Return results from Stabilize store
+
+        Args:
+            wait: If True, wait for completion
+            timeout: Maximum wait time in seconds
+            workflow_id: Optional workflow ID for idempotency
+            inputs: Workflow input variables
+
+        Returns:
+            WorkflowResult with execution status
+        """
+        if not self.api_key:
+            raise ConfigurationError(
+                "HIGHWAY_API_KEY not configured. "
+                "Set environment variable or pass api_key to Driver()"
+            )
+
+        inputs = inputs or {}
+
+        # Build workflow JSON with workflow-level timeout and inputs
+        workflow_json = self._build_workflow(workflow_timeout=int(timeout), inputs=inputs)
+
+        # Use Stabilize runner for execution
+        runner = self._get_runner()
+
+        # Collect durable task info for artifact packaging
+        durable_functions = self.get_durable_functions() if self.needs_artifact() else None
+        package_dirs = self.get_package_dirs() if self.needs_artifact() else None
+
+        if wait:
+            return runner.run(
+                workflow_json,
+                inputs={},
+                timeout=timeout,
+                workflow_id=workflow_id,
+                durable_functions=durable_functions,
+                package_dirs=package_dirs,
+            )
+        else:
+            return runner.submit(
+                workflow_json,
+                inputs={},
+                workflow_id=workflow_id,
+                durable_functions=durable_functions,
+                package_dirs=package_dirs,
+            )
+
+    def _get_runner(self) -> HighwayRunner:
+        """Get or create the Highway runner instance.
+
+        Returns:
+            HighwayRunner for Highway API communication
+        """
+        from highway.runner import HighwayRunner
+
+        return HighwayRunner(
+            api_key=self.api_key,
+            endpoint=self.endpoint,
+        )
