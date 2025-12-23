@@ -25,3 +25,28 @@ class WorkflowState(Enum):
             WorkflowState.CANCELLED,
             WorkflowState.TIMED_OUT,
         )
+
+@dataclass
+class TaskResult:
+    """Result of a single task execution.
+
+    Attributes:
+        name: Task name
+        state: Current state
+        result: Return value (if completed)
+        error: Error message (if failed)
+        started_at: When execution started
+        completed_at: When execution completed
+        stdout: Standard output (for shell tasks)
+        stderr: Standard error (for shell tasks)
+        returncode: Exit code (for shell tasks)
+    """
+    name: str
+    state: WorkflowState
+    result: Any = None
+    error: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    stdout: str | None = None
+    stderr: str | None = None
+    returncode: int | None = None
