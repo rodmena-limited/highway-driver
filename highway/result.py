@@ -86,3 +86,7 @@ class WorkflowResult:
             self.state = WorkflowState(self.state)
         if self.status == "pending":
             self.status = self.state.value
+
+    def is_success(self) -> bool:
+        """Check if workflow completed successfully."""
+        return self.state == WorkflowState.COMPLETED
