@@ -11,3 +11,13 @@ class ConfigurationError(HighwayDriverError):
         - Invalid endpoint URL
         - Invalid timeout value
     """
+
+class TaskDefinitionError(HighwayDriverError):
+    """Raised when a task is defined incorrectly.
+
+    Examples:
+        - Multiple task types specified (shell=True, py=True)
+        - No task type specified
+        - Invalid dependency reference
+        - Circular dependency detected
+    """
