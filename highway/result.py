@@ -16,3 +16,12 @@ class WorkflowState(Enum):
     FAILED = 'failed'
     CANCELLED = 'cancelled'
     TIMED_OUT = 'timed_out'
+
+    def is_terminal(self) -> bool:
+        """Check if this is a terminal state."""
+        return self in (
+            WorkflowState.COMPLETED,
+            WorkflowState.FAILED,
+            WorkflowState.CANCELLED,
+            WorkflowState.TIMED_OUT,
+        )
