@@ -50,3 +50,7 @@ class TaskResult:
     stdout: str | None = None
     stderr: str | None = None
     returncode: int | None = None
+
+    def is_success(self) -> bool:
+        """Check if task completed successfully."""
+        return self.state == WorkflowState.COMPLETED and self.error is None
