@@ -94,3 +94,7 @@ class WorkflowResult:
     def is_terminal(self) -> bool:
         """Check if workflow has finished (success, fail, or cancel)."""
         return self.state.is_terminal()
+
+    def get_task_result(self, task_name: str) -> TaskResult | None:
+        """Get result for a specific task."""
+        return self.tasks.get(task_name)
