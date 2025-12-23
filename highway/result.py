@@ -90,3 +90,7 @@ class WorkflowResult:
     def is_success(self) -> bool:
         """Check if workflow completed successfully."""
         return self.state == WorkflowState.COMPLETED
+
+    def is_terminal(self) -> bool:
+        """Check if workflow has finished (success, fail, or cancel)."""
+        return self.state.is_terminal()
