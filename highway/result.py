@@ -54,3 +54,28 @@ class TaskResult:
     def is_success(self) -> bool:
         """Check if task completed successfully."""
         return self.state == WorkflowState.COMPLETED and self.error is None
+
+@dataclass
+class WorkflowResult:
+    """Result of a workflow execution.
+
+    Attributes:
+        run_id: Highway workflow run ID
+        workflow_id: User-provided workflow ID for idempotency
+        status: Overall workflow status string
+        state: Workflow state enum
+        tasks: Results for each task by name
+        started_at: When workflow started
+        completed_at: When workflow completed
+        error: Error message if failed
+        stabilize_execution_id: Stabilize orchestration execution ID
+    """
+    run_id: str | None = None
+    workflow_id: str | None = None
+    status: str = 'pending'
+    state: WorkflowState = WorkflowState.PENDING
+    tasks: dict[str, TaskResult] = field(default_factory=dict)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
+    stabilize_execution_id: str | None = None
