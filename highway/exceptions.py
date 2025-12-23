@@ -30,3 +30,12 @@ class WorkflowBuildError(HighwayDriverError):
         - Invalid workflow structure
         - Missing required workflow fields
     """
+
+class SubmissionError(HighwayDriverError):
+    """Raised when workflow submission to Highway fails.
+
+    Examples:
+        - Network error
+        - Authentication failure (401/403)
+        - Server error (5xx)
+    """
