@@ -658,3 +658,384 @@ class Driver:
             api_key=self.api_key,
             endpoint=self.endpoint,
         )
+
+    def _timedelta_to_iso8601(self, td: timedelta) -> str:
+        """Convert timedelta to ISO 8601 duration format.
+
+        Highway's WaitOperator expects durations in ISO 8601 format.
+
+        Args:
+            td: timedelta to convert
+
+        Returns:
+            ISO 8601 duration string (e.g., "PT3S", "PT7200S")
+
+        Examples:
+            timedelta(seconds=3) -> "PT3S"
+            timedelta(hours=2) -> "PT7200S"
+            timedelta(days=1) -> "PT86400S"
+        """
+        total_seconds = int(td.total_seconds())
+        return "PT%dS" % total_seconds
+
+    def _build_workflow(
+        self,
+        workflow_timeout: int = 300,
+        inputs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build Highway DSL workflow JSON from registered tasks.
+
+        Args:
+            workflow_timeout: Workflow-level timeout in seconds
+            inputs: Workflow input variables
+
+        Returns:
+            Workflow definition dict for Highway API
+        """
+        # Determine workflow name: explicit > derived from first task > uuid fallback
+        # Note: Highway DB constraint requires underscores, not dashes
+        if self._name:
+            workflow_name = self._name.replace("-", "_")
+        elif self._tasks:
+            first_task = next(iter(self._tasks.keys()))
+            workflow_name = "workflow_%s" % first_task
+        else:
+            workflow_name = "driver_workflow_%s" % uuid.uuid4().hex[:8]
+
+        logger.debug(
+            "Building workflow '%s' with %d tasks",
+            workflow_name,
+            len(self._tasks),
+        )
+
+        tasks_json: dict[str, Any] = {}
+
+        for name, task in self._tasks.items():
+            # If task has delay, insert a wait task first
+            if task.delay is not None:
+                wait_task_id = "%s_wait" % name
+                wait_duration = self._timedelta_to_iso8601(task.delay)
+
+                tasks_json[wait_task_id] = {
+                    "task_id": wait_task_id,
+                    "operator_type": "wait",
+                    "dependencies": task.depends,  # Wait inherits original deps
+                    "trigger_rule": "all_success",
+                    "wait_for": wait_duration,
+                }
+
+                # Actual task depends on wait task instead of original deps
+                actual_deps = [wait_task_id]
+            else:
+                actual_deps = task.depends
+
+            task_json: dict[str, Any] = {
+                "task_id": name,
+                "operator_type": "task",
+                "dependencies": actual_deps,
+                "trigger_rule": "all_success",
+                "result_key": task.get_result_key(),
+            }
+
+            # Add timeout for the task
+            if task.timeout > 0:
+                task_json["timeout_seconds"] = task.timeout
+
+            # Add retry configuration if specified
+            if task.retries > 0:
+                task_json["retry_policy"] = {
+                    "max_attempts": task.retries + 1,  # +1 for initial attempt
+                    "initial_interval_seconds": task.retry_delay,
+                    "backoff_coefficient": task.backoff_rate,
+                }
+
+            if task.task_type == TaskType.SHELL:
+                # Get command from function
+                command = task.func()
+                task_json["function"] = "tools.shell.run"
+                task_json["args"] = [command]
+                task_json["kwargs"] = {}
+
+            elif task.task_type == TaskType.HTTP:
+                # Get config from function
+                config = task.func()
+                task_json["function"] = "tools.http.request"
+                task_json["kwargs"] = config
+
+            elif task.task_type == TaskType.PYTHON:
+                if task.durable:
+                    # Use tools.python.run with DurableContext
+                    task_json["function"] = "tools.python.run"
+
+                    if task.package:
+                        # External package mode: use specified entrypoint
+                        # entrypoint format: "cli:main" -> "issuedb.cli.main"
+                        package_name = os.path.basename(task.package.rstrip("/"))
+                        module_path, func_name = task.entrypoint.split(":")
+                        task_json["args"] = ["%s.%s.%s" % (package_name, module_path, func_name)]
+                    else:
+                        # Auto-packaged function mode
+                        # Uses wrapper: driver_tasks.tasks._hw_<func_name>
+                        # Wrapper handles ctx injection for existing code compatibility
+                        task_json["args"] = ["driver_tasks.tasks._hw_%s" % task.func.__name__]
+
+                    # Add function positional args if specified
+                    if task.func_args:
+                        task_json["args"].extend(task.func_args)
+
+                    # Artifact ID will be injected by runner after upload
+                    task_json["kwargs"] = {"artifact_id": "{{_artifact_id}}"}
+
+                    # Add function keyword args if specified
+                    if task.func_kwargs:
+                        task_json["kwargs"].update(task.func_kwargs)
+                else:
+                    # Get function source code for remote execution
+                    source = inspect.getsource(task.func)
+                    source = textwrap.dedent(source)
+
+                    # Use AST to strip top-level decorators properly
+                    tree = ast.parse(source)
+                    func_def = tree.body[0]
+                    if isinstance(func_def, ast.FunctionDef):
+                        func_def.decorator_list = []  # Remove decorators
+                    source = ast.unparse(tree)
+
+                    # Generate wrapper that executes function and returns result as JSON
+                    # Highway's tools.code.exec runs this in a sandboxed environment
+                    wrapper = """
+    import json
+
+    %s
+
+    _result = %s()
+    # Output result in Highway-recognized format
+    print("__HIGHWAY_RESULT__:" + json.dumps(_result))
+    """ % (source, task.func.__name__)
+
+                    task_json["function"] = "tools.code.exec"
+                    task_json["kwargs"] = {
+                        "code": wrapper,
+                        "timeout": task.timeout,
+                    }
+
+            elif task.task_type == TaskType.TOOL:
+                # Generic Highway tool - function returns kwargs
+                config = task.func()
+                task_json["function"] = task.tool_name
+                task_json["kwargs"] = config if isinstance(config, dict) else {}
+
+            elif task.task_type == TaskType.WORKFLOW:
+                # Execute another workflow via tools.workflow.execute
+                config = task.func()
+                workflow_kwargs: dict[str, Any] = {}
+
+                # Set workflow identifier (name or definition_id)
+                if task.workflow_definition_id:
+                    workflow_kwargs["definition_id"] = task.workflow_definition_id
+                elif task.workflow_name:
+                    workflow_kwargs["workflow_name"] = task.workflow_name
+
+                # Include inputs from function return value
+                if isinstance(config, dict) and "inputs" in config:
+                    workflow_kwargs["inputs"] = config["inputs"]
+
+                task_json["function"] = "tools.workflow.execute"
+                task_json["kwargs"] = workflow_kwargs
+
+            elif task.task_type == TaskType.FOREACH:
+                # ForEach loop over a collection
+                source = inspect.getsource(task.func)
+                source = textwrap.dedent(source)
+
+                # Use AST to strip top-level decorators
+                tree = ast.parse(source)
+                func_def = tree.body[0]
+                if isinstance(func_def, ast.FunctionDef):
+                    func_def.decorator_list = []
+                source = ast.unparse(tree)
+
+                # Generate wrapper for loop body
+                wrapper = """
+    import json
+
+    %s
+
+    _result = %s()
+    print("__HIGHWAY_RESULT__:" + json.dumps(_result))
+    """ % (source, task.func.__name__)
+
+                # Build loop body task (must match WorkflowBuilder format)
+                body_task_id = "%s_body" % name
+                body_task: dict[str, Any] = {
+                    "task_id": body_task_id,
+                    "operator_type": "task",
+                    "dependencies": [name],  # Loop body depends on foreach parent
+                    "trigger_rule": "all_success",
+                    "function": "tools.code.exec",
+                    "kwargs": {
+                        "code": wrapper,
+                        "timeout": task.timeout,
+                    },
+                    "result_key": "%s_item_result" % name,
+                    "is_internal_loop_task": True,  # Mark as internal loop task
+                }
+
+                # Override task_json for foreach operator
+                task_json = {
+                    "task_id": name,
+                    "operator_type": "foreach",
+                    "dependencies": actual_deps,
+                    "trigger_rule": "all_success",
+                    "items": task.items,
+                    "loop_body": [body_task],  # Must be a list
+                    "parallel": False,  # Sequential by default
+                    "result_key": task.get_result_key(),
+                }
+
+                # Also register the loop body as a top-level task
+                tasks_json[body_task_id] = body_task
+
+            elif task.task_type == TaskType.WHILE:
+                # While loop with condition
+                body_task_id = "%s_body" % name
+
+                if task.durable:
+                    # Use tools.python.run with DurableContext
+                    body_task: dict[str, Any] = {
+                        "task_id": body_task_id,
+                        "operator_type": "task",
+                        "dependencies": [name],
+                        "trigger_rule": "all_success",
+                        "function": "tools.python.run",
+                        "args": ["driver_tasks.tasks._hw_%s" % task.func.__name__],
+                        "kwargs": {"artifact_id": "{{_artifact_id}}"},
+                        "result_key": "%s_iteration_result" % name,
+                        "is_internal_loop_task": True,
+                    }
+                else:
+                    # Fall back to tools.code.exec (no DurableContext)
+                    source = inspect.getsource(task.func)
+                    source = textwrap.dedent(source)
+
+                    tree = ast.parse(source)
+                    func_def = tree.body[0]
+                    if isinstance(func_def, ast.FunctionDef):
+                        func_def.decorator_list = []
+                    source = ast.unparse(tree)
+
+                    wrapper = """
+    import json
+
+    %s
+
+    _result = %s()
+    print("__HIGHWAY_RESULT__:" + json.dumps(_result))
+    """ % (source, task.func.__name__)
+
+                    body_task = {
+                        "task_id": body_task_id,
+                        "operator_type": "task",
+                        "dependencies": [name],
+                        "trigger_rule": "all_success",
+                        "function": "tools.code.exec",
+                        "kwargs": {
+                            "code": wrapper,
+                            "timeout": task.timeout,
+                        },
+                        "result_key": "%s_iteration_result" % name,
+                        "is_internal_loop_task": True,
+                    }
+
+                # Override task_json for while operator
+                task_json = {
+                    "task_id": name,
+                    "operator_type": "while",
+                    "dependencies": actual_deps,
+                    "trigger_rule": "all_success",
+                    "condition": task.condition,
+                    "loop_body": [body_task],  # Must be a list
+                    "result_key": task.get_result_key(),
+                }
+
+                # Also register the loop body as a top-level task
+                tasks_json[body_task_id] = body_task
+
+            elif task.task_type == TaskType.EMIT:
+                # Emit event operator
+                task_json = {
+                    "task_id": name,
+                    "operator_type": "emit_event",
+                    "dependencies": actual_deps,
+                    "trigger_rule": "all_success",
+                    "event_name": task.event_name,
+                    "payload": task.event_payload or {},
+                    "result_key": task.get_result_key(),
+                }
+
+            elif task.task_type == TaskType.WAIT_FOR:
+                # Wait for event operator
+                task_json = {
+                    "task_id": name,
+                    "operator_type": "wait_for_event",
+                    "dependencies": actual_deps,
+                    "trigger_rule": "all_success",
+                    "event_name": task.event_name,
+                    "timeout_seconds": task.event_timeout or 30,
+                    "result_key": task.get_result_key(),
+                }
+
+            tasks_json[name] = task_json
+
+        # Find start_task from generated tasks (tasks with no dependencies)
+        start_task: str | None = None
+        no_deps = [
+            task_id for task_id, task_def in tasks_json.items() if not task_def.get("dependencies")
+        ]
+        if no_deps:
+            start_task = sorted(no_deps)[0]
+
+        # Check for workflow-level schedule (from first scheduled task)
+        scheduled_tasks = [t for t in self._tasks.values() if t.schedule]
+        workflow_schedule: str | None = None
+        if scheduled_tasks:
+            # Use schedule from first scheduled task for workflow
+            workflow_schedule = scheduled_tasks[0].schedule
+
+        workflow_def: dict[str, Any] = {
+            "name": workflow_name,
+            "version": "1.0.0",
+            "description": "Workflow generated by Highway Driver SDK",
+            "start_task": start_task,
+            "tasks": tasks_json,
+            "variables": inputs or {},
+            "max_active_runs": 1,
+            "timeout_seconds": workflow_timeout,
+        }
+
+        # Add schedule if any tasks are scheduled
+        if workflow_schedule:
+            workflow_def["schedule"] = workflow_schedule
+
+        logger.info(
+            "Workflow '%s' built: %d tasks, start_task=%s",
+            workflow_name,
+            len(tasks_json),
+            start_task,
+        )
+        return workflow_def
+
+    def status(self, run_id: str) -> WorkflowResult:
+        """Get current status of a workflow.
+
+        Args:
+            run_id: Highway workflow run ID
+
+        Returns:
+            WorkflowResult with current state
+        """
+        if not self.api_key:
+            raise ConfigurationError("API key required for status()")
+
+        runner = self._get_runner()
+        return runner.status(run_id)
