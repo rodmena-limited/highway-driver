@@ -39,3 +39,12 @@ class SubmissionError(HighwayDriverError):
         - Authentication failure (401/403)
         - Server error (5xx)
     """
+
+class ExecutionError(HighwayDriverError):
+    """Raised when workflow execution fails.
+
+    Examples:
+        - Workflow failed status from Highway
+        - Timeout waiting for completion
+        - Cancelled by user
+    """
