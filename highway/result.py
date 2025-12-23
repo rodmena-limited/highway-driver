@@ -102,3 +102,26 @@ class WorkflowResult:
     def all_tasks_succeeded(self) -> bool:
         """Check if all tasks completed successfully."""
         return all(t.is_success() for t in self.tasks.values())
+
+@dataclass
+class WorkflowStatus:
+    """Current status of a workflow (for observability).
+
+    This is returned by Driver.status() for tracking running workflows.
+
+    Attributes:
+        run_id: Highway workflow run ID
+        state: Current workflow state
+        current_task: Name of currently executing task
+        tasks: Status of each task
+        started_at: When workflow started
+        completed_at: When workflow completed (if terminal)
+        progress: Completion progress (0.0 to 1.0)
+    """
+    run_id: str
+    state: WorkflowState
+    current_task: str | None = None
+    tasks: dict[str, TaskResult] = field(default_factory=dict)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    progress: float = 0.0
