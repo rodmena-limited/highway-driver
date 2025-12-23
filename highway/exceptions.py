@@ -21,3 +21,12 @@ class TaskDefinitionError(HighwayDriverError):
         - Invalid dependency reference
         - Circular dependency detected
     """
+
+class WorkflowBuildError(HighwayDriverError):
+    """Raised when workflow DSL generation fails.
+
+    Examples:
+        - Cannot serialize task to Highway DSL
+        - Invalid workflow structure
+        - Missing required workflow fields
+    """
