@@ -98,3 +98,7 @@ class WorkflowResult:
     def get_task_result(self, task_name: str) -> TaskResult | None:
         """Get result for a specific task."""
         return self.tasks.get(task_name)
+
+    def all_tasks_succeeded(self) -> bool:
+        """Check if all tasks completed successfully."""
+        return all(t.is_success() for t in self.tasks.values())
