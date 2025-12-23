@@ -1039,3 +1039,40 @@ class Driver:
 
         runner = self._get_runner()
         return runner.status(run_id)
+
+    def cancel(self, run_id: str) -> bool:
+        """Cancel a running workflow via Stabilize.
+
+        Args:
+            run_id: Stabilize workflow run ID
+
+        Returns:
+            True if cancellation was successful
+        """
+        if not self.api_key:
+            raise ConfigurationError("API key required for cancel()")
+
+        runner = self._get_runner()
+        return runner.cancel(run_id)
+
+    def logs(self, run_id: str) -> list[dict[str, Any]]:
+        """Get execution logs for a workflow.
+
+        Args:
+            run_id: Workflow run ID (Stabilize execution ID or Highway run ID)
+
+        Returns:
+            List of log entries from the workflow execution
+        """
+        if not self.api_key:
+            raise ConfigurationError("API key required for logs()")
+
+        runner = self._get_runner()
+        return runner.logs(run_id)
+
+    def clear(self) -> None:
+        """Clear all registered tasks.
+
+        Useful for testing or reusing a Driver instance.
+        """
+        self._tasks.clear()
