@@ -1,4 +1,11 @@
+"""Main Highway Driver class with @task decorator.
+
+This is the primary interface for the Highway Driver SDK.
+Users import Driver and use @driver.task() to define workflows.
+"""
+
 from __future__ import annotations
+
 import ast
 import inspect
 import logging
@@ -8,7 +15,14 @@ import uuid
 from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
+
+logger = logging.getLogger(__name__)
+
 from highway.ast_utils import FunctionAnalyzer
+
+if TYPE_CHECKING:
+    from highway.runner import HighwayRunner
+
 from highway.exceptions import (
     ConfigurationError,
     NotSupportedError,
@@ -16,8 +30,9 @@ from highway.exceptions import (
 )
 from highway.result import WorkflowResult
 from highway.task import TaskDefinition, TaskType
-logger = logging.getLogger(__name__)
+
 F = TypeVar("F", bound=Callable[..., Any])
+
 
 class Driver:
     """Highway Driver - Simple decorator SDK for Highway Workflow Engine.
@@ -55,6 +70,7 @@ class Driver:
         endpoint: Highway API endpoint URL
         tasks: Registered task definitions
     """
+
     def __init__(
         self,
         name: str | None = None,
@@ -85,6 +101,7 @@ class Driver:
         self._tasks: dict[str, TaskDefinition] = {}
         self._analyzer = FunctionAnalyzer()
 
+    @property
     def tasks(self) -> dict[str, TaskDefinition]:
         """Get all registered tasks."""
         return self._tasks.copy()
@@ -804,14 +821,14 @@ class Driver:
                     # Generate wrapper that executes function and returns result as JSON
                     # Highway's tools.code.exec runs this in a sandboxed environment
                     wrapper = """
-    import json
+import json
 
-    %s
+%s
 
-    _result = %s()
-    # Output result in Highway-recognized format
-    print("__HIGHWAY_RESULT__:" + json.dumps(_result))
-    """ % (source, task.func.__name__)
+_result = %s()
+# Output result in Highway-recognized format
+print("__HIGHWAY_RESULT__:" + json.dumps(_result))
+""" % (source, task.func.__name__)
 
                     task_json["function"] = "tools.code.exec"
                     task_json["kwargs"] = {
@@ -857,13 +874,13 @@ class Driver:
 
                 # Generate wrapper for loop body
                 wrapper = """
-    import json
+import json
 
-    %s
+%s
 
-    _result = %s()
-    print("__HIGHWAY_RESULT__:" + json.dumps(_result))
-    """ % (source, task.func.__name__)
+_result = %s()
+print("__HIGHWAY_RESULT__:" + json.dumps(_result))
+""" % (source, task.func.__name__)
 
                 # Build loop body task (must match WorkflowBuilder format)
                 body_task_id = "%s_body" % name
@@ -925,13 +942,13 @@ class Driver:
                     source = ast.unparse(tree)
 
                     wrapper = """
-    import json
+import json
 
-    %s
+%s
 
-    _result = %s()
-    print("__HIGHWAY_RESULT__:" + json.dumps(_result))
-    """ % (source, task.func.__name__)
+_result = %s()
+print("__HIGHWAY_RESULT__:" + json.dumps(_result))
+""" % (source, task.func.__name__)
 
                     body_task = {
                         "task_id": body_task_id,
@@ -1076,3 +1093,37 @@ class Driver:
         Useful for testing or reusing a Driver instance.
         """
         self._tasks.clear()
+
+    def needs_artifact(self) -> bool:
+        """Check if any tasks require artifact packaging.
+
+        Returns:
+            True if any tasks use durable=True
+        """
+        return any(t.durable for t in self._tasks.values())
+
+    def get_durable_functions(self) -> dict[str, Callable[..., Any]]:
+        """Get all durable functions that need packaging.
+
+        Only returns functions for auto-packaged mode (no package= specified).
+
+        Returns:
+            Dict mapping function name to callable
+        """
+        return {
+            t.name: t.func
+            for t in self._tasks.values()
+            if t.durable and not t.package
+        }
+
+    def get_package_dirs(self) -> dict[str, tuple[str, str]]:
+        """Get package directories that need packaging.
+
+        Returns:
+            Dict mapping task name to (package_path, entrypoint)
+        """
+        return {
+            t.name: (t.package, t.entrypoint)
+            for t in self._tasks.values()
+            if t.durable and t.package
+        }
