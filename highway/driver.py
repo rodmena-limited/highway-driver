@@ -366,3 +366,173 @@ class Driver:
             return func
 
         return decorator
+
+    def while_loop(
+        self,
+        condition: str,
+        depends: list[str] | None = None,
+        timeout: int = 300,
+        max_iterations: int = 100,
+        durable: bool = True,
+    ) -> Callable[[F], F]:
+        """Decorator to define a While loop with a condition.
+
+        The decorated function is executed repeatedly while condition is true.
+        Defaults to durable=True to enable mutable workflow variables via
+        ctx.set_variable() / ctx.get_variable().
+
+        Args:
+            condition: Expression to evaluate (e.g., "{{counter}} < 10")
+            depends: List of task names this depends on
+            timeout: Execution timeout in seconds per iteration
+            max_iterations: Safety limit on iterations (default 100)
+            durable: Use tools.python.run with DurableContext (default True)
+
+        Returns:
+            Decorated function
+
+        Example:
+            @driver.task(durable=True)
+            def init(ctx):
+                ctx.set_variable("counter", 0)
+                ctx.set_variable("limit", 5)
+                return {"initialized": True}
+
+            @driver.while_loop(condition="{{counter}} < {{limit}}", depends=["init"])
+            def increment(ctx):
+                counter = ctx.get_variable("counter", 0)
+                ctx.set_variable("counter", counter + 1)
+                return {"iteration": counter + 1}
+        """
+
+        def decorator(func: F) -> F:
+            if func.__name__ in self._tasks:
+                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+
+            analysis = self._analyzer.analyze(func)
+
+            task_def = TaskDefinition(
+                name=func.__name__,
+                func=func,
+                task_type=TaskType.WHILE,
+                depends=depends or [],
+                timeout=timeout,
+                condition=condition,
+                analysis=analysis,
+                durable=durable,
+            )
+
+            self._tasks[func.__name__] = task_def
+            logger.info(
+                "Registered while_loop '%s' (condition=%s, max_iter=%d, durable=%s)",
+                func.__name__,
+                condition,
+                max_iterations,
+                durable,
+            )
+            return func
+
+        return decorator
+
+    def emit(
+        self,
+        event: str,
+        payload: dict[str, Any] | None = None,
+        depends: list[str] | None = None,
+    ) -> Callable[[F], F]:
+        """Decorator to emit an event during workflow execution.
+
+        Args:
+            event: Name of the event to emit
+            payload: Static payload for the event (can include variables)
+            depends: List of task names this depends on
+
+        Returns:
+            Decorated function
+
+        Example:
+            @driver.task(py=True)
+            def setup():
+                return {"workflow_id": "123"}
+
+            @driver.emit(event="workflow_ready", payload={"id": "{{setup_result.workflow_id}}"}, depends=["setup"])
+            def signal_ready():
+                pass  # Marker function - actual emission handled by Highway
+        """
+
+        def decorator(func: F) -> F:
+            if func.__name__ in self._tasks:
+                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+
+            task_def = TaskDefinition(
+                name=func.__name__,
+                func=func,
+                task_type=TaskType.EMIT,
+                depends=depends or [],
+                event_name=event,
+                event_payload=payload or {},
+            )
+
+            self._tasks[func.__name__] = task_def
+            logger.info(
+                "Registered emit '%s' (event=%s, depends=%s)",
+                func.__name__,
+                event,
+                depends or [],
+            )
+            return func
+
+        return decorator
+
+    def wait_for(
+        self,
+        event: str,
+        timeout: int = 30,
+        depends: list[str] | None = None,
+    ) -> Callable[[F], F]:
+        """Decorator to wait for an event during workflow execution.
+
+        Suspends workflow execution until the specified event is received
+        or timeout is reached.
+
+        Args:
+            event: Name of the event to wait for
+            timeout: Maximum wait time in seconds
+            depends: List of task names this depends on
+
+        Returns:
+            Decorated function
+
+        Example:
+            @driver.emit(event="task_ready")
+            def send_signal():
+                pass
+
+            @driver.wait_for(event="task_ready", timeout=60, depends=["send_signal"])
+            def receive_signal():
+                pass  # Marker function - actual wait handled by Highway
+        """
+
+        def decorator(func: F) -> F:
+            if func.__name__ in self._tasks:
+                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+
+            task_def = TaskDefinition(
+                name=func.__name__,
+                func=func,
+                task_type=TaskType.WAIT_FOR,
+                depends=depends or [],
+                event_name=event,
+                event_timeout=timeout,
+            )
+
+            self._tasks[func.__name__] = task_def
+            logger.info(
+                "Registered wait_for '%s' (event=%s, timeout=%ds)",
+                func.__name__,
+                event,
+                timeout,
+            )
+            return func
+
+        return decorator
