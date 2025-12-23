@@ -79,3 +79,10 @@ class WorkflowResult:
     completed_at: datetime | None = None
     error: str | None = None
     stabilize_execution_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Sync status string with state enum."""
+        if isinstance(self.state, str):
+            self.state = WorkflowState(self.state)
+        if self.status == "pending":
+            self.status = self.state.value
