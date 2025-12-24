@@ -401,3 +401,109 @@ class HighwayRunner:
                 ),
             ],
         )
+
+    def _package_artifact(
+        self,
+        durable_functions: dict[str, Callable[..., Any]] | None,
+        package_dirs: dict[str, tuple[str, str]] | None,
+    ) -> PackagedArtifact:
+        """Package functions or directories into artifact ZIP.
+
+        Args:
+            durable_functions: Dict of function name -> callable
+            package_dirs: Dict of task name -> (package_path, entrypoint)
+
+        Returns:
+            PackagedArtifact with file path and metadata
+        """
+        # If package directories specified, use first one
+        # TODO: Support multiple package directories
+        if package_dirs:
+            first_task = next(iter(package_dirs.keys()))
+            package_path, entrypoint = package_dirs[first_task]
+            return package_directory(
+                source_dir=package_path,
+                entrypoint=entrypoint,
+            )
+
+        # Otherwise package individual functions
+        if durable_functions:
+            return package_functions(durable_functions)
+
+        raise ValueError("No functions or packages to package")
+
+    def _create_multistage_workflow(
+        self,
+        workflow_json: dict[str, Any],
+        artifact_path: str,
+        inputs: dict[str, Any],
+    ) -> Workflow:
+        """Create 2-stage workflow: upload artifact -> execute Highway workflow.
+
+        Args:
+            workflow_json: Highway workflow definition
+            artifact_path: Path to ZIP file from mktemp
+            inputs: Workflow inputs
+
+        Returns:
+            Stabilize Workflow with upload and execution stages
+        """
+        workflow_name = workflow_json.get("name", "driver_workflow")
+
+        return Workflow.create(
+            application="highway-driver",
+            name=workflow_name,
+            stages=[
+                # Stage 1: Upload artifact via HTTPTask
+                StageExecution(
+                    ref_id="upload_artifact",
+                    type="http",
+                    name="Upload Artifact",
+                    context={
+                        "url": "%s/api/v1/artifacts" % self.endpoint,
+                        "method": "POST",
+                        "upload_file": artifact_path,
+                        "upload_field": "artifact",
+                        "bearer_token": self.api_key,
+                        "parse_json": True,
+                        "timeout": 60,
+                    },
+                    tasks=[
+                        TaskExecution.create(
+                            name="Upload",
+                            implementing_class="http",
+                            stage_start=True,
+                            stage_end=True,
+                        ),
+                    ],
+                ),
+                # Stage 2: Execute Highway workflow with artifact_id
+                # MUST depend on Stage 1 to get artifact_id from upload response
+                StageExecution(
+                    ref_id="highway_execution",
+                    type="highway",
+                    name="Execute Highway Workflow",
+                    requisite_stage_ref_ids={"upload_artifact"},  # Wait for upload
+                    context={
+                        "highway_workflow_definition": self._inject_artifact_id(workflow_json),
+                        "highway_inputs": inputs,
+                        "highway_api_endpoint": self.endpoint,
+                        "highway_api_key": self.api_key,
+                        "highway_poll_interval_seconds": self.poll_interval,
+                        # Map artifact_id from Stage 1's HTTPTask response
+                        # body_json comes from HTTPTask output, HighwayTask resolves the path
+                        "highway_input_mappings": {
+                            "_artifact_id": "body_json.artifact_id",
+                        },
+                    },
+                    tasks=[
+                        TaskExecution.create(
+                            name="Highway Task",
+                            implementing_class="highway",
+                            stage_start=True,
+                            stage_end=True,
+                        ),
+                    ],
+                ),
+            ],
+        )
