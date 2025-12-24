@@ -1,9 +1,24 @@
+"""Stabilize-based workflow runner for Highway Driver.
+
+This module provides the HighwayRunner class that executes Highway
+workflows through Stabilize orchestration layer.
+
+Architecture:
+    highway-driver -> Stabilize (HighwayTask) -> Highway API
+
+The Golden Rule:
+    highway-driver NEVER talks directly to Highway Engine.
+    All execution goes through Stabilize.
+"""
+
 from __future__ import annotations
+
 import logging
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
 from stabilize import StageExecution, TaskExecution, Workflow
 from stabilize.handlers.complete_stage import CompleteStageHandler
 from stabilize.handlers.complete_task import CompleteTaskHandler
@@ -19,15 +34,22 @@ from stabilize.queue.sqlite_queue import SqliteQueue
 from stabilize.tasks.highway import HighwayTask
 from stabilize.tasks.http import HTTPTask
 from stabilize.tasks.registry import TaskRegistry
+
 from highway.artifact import (
     PackagedArtifact,
     cleanup_artifact,
     package_directory,
     package_functions,
 )
+
+if TYPE_CHECKING:
+    from highway.result import WorkflowResult
+
 logger = logging.getLogger(__name__)
+
+# Default polling configuration
 DEFAULT_POLL_INTERVAL = 5.0  # seconds
-StabilizeRunner = HighwayRunner
+
 
 class HighwayRunner:
     """Execute workflows via Stabilize + HighwayTask.
@@ -42,6 +64,7 @@ class HighwayRunner:
         )
         result = runner.run(workflow_json, inputs={}, timeout=300)
     """
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -507,3 +530,164 @@ class HighwayRunner:
                 ),
             ],
         )
+
+    def _inject_artifact_id(
+        self,
+        workflow_json: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Prepare workflow definition for artifact_id injection.
+
+        The workflow tasks use {{_artifact_id}} which Highway resolves
+        from workflow inputs. The actual artifact_id value is passed
+        via highway_input_mappings -> HighwayTask resolves body_json.artifact_id
+        and adds it to inputs before submitting to Highway.
+
+        Args:
+            workflow_json: Original workflow definition
+
+        Returns:
+            Workflow definition (unchanged, artifact_id comes from inputs)
+        """
+        # No modification needed - artifact_id is passed via inputs
+        # from HighwayTask's highway_input_mappings resolution
+        return workflow_json
+
+    def _convert_to_workflow_result(
+        self,
+        stabilize_result: Workflow,
+        stabilize_id: str,
+    ) -> WorkflowResult:
+        """Convert Stabilize result to highway WorkflowResult.
+
+        Args:
+            stabilize_result: Stabilize Workflow after execution
+            stabilize_id: Stabilize execution ID
+
+        Returns:
+            WorkflowResult for highway-driver API
+        """
+        from highway.result import TaskResult, WorkflowResult, WorkflowState
+
+        # Find the highway stage (may be stages[0] for single-stage or stages[1] for multi-stage)
+        stage = None
+        for s in stabilize_result.stages:
+            if s.type == "highway":
+                stage = s
+                break
+        # Fallback to last stage if no highway type found
+        if stage is None:
+            stage = stabilize_result.stages[-1]
+
+        outputs = stage.outputs or {}
+        context = stage.context or {}
+
+        # Extract Highway-specific data from outputs or context
+        # Use stabilize_id as fallback when Highway run_id isn't available yet
+        highway_run_id = (
+            outputs.get("highway_run_id") or context.get("highway_run_id") or stabilize_id
+        )
+        highway_status = (
+            outputs.get("highway_status")
+            or context.get("highway_status")
+            or "unknown"
+        )
+        highway_result = outputs.get("highway_result") or context.get("highway_result") or {}
+
+        # If status is still unknown but there's an error, infer failed
+        stage_error = outputs.get("error") or context.get("error")
+        if highway_status == "unknown" and stage_error:
+            highway_status = "failed"
+
+        # Map Stabilize status to WorkflowState
+        state = self._map_status_to_state(highway_status, stabilize_result.status)
+
+        # Parse task results from highway_result
+        tasks: dict[str, TaskResult] = {}
+        if isinstance(highway_result, dict):
+            # Highway returns result with output key
+            output = highway_result.get("output", highway_result)
+            if isinstance(output, dict):
+                # Try to parse __HIGHWAY_RESULT__ from stdout
+                stdout = output.get("stdout", "")
+                if "__HIGHWAY_RESULT__:" in stdout:
+                    try:
+                        import json
+
+                        json_str = stdout.split("__HIGHWAY_RESULT__:")[1].strip()
+                        json_str = json_str.split("\n")[0]
+                        parsed = json.loads(json_str)
+                        output["parsed_result"] = parsed
+                    except Exception:
+                        pass
+
+                # Create task result from output
+                for task_name in ["highway_task"]:
+                    tasks[task_name] = TaskResult(
+                        name=task_name,
+                        state=state,
+                        result=output,
+                    )
+
+        # Get error if failed (reuse stage_error from earlier check)
+        error = stage_error if state == WorkflowState.FAILED else None
+
+        return WorkflowResult(
+            run_id=highway_run_id,
+            workflow_id=None,
+            status=highway_status,
+            state=state,
+            tasks=tasks,
+            error=error,
+            stabilize_execution_id=stabilize_id,
+        )
+
+    def _map_status_to_state(
+        self,
+        highway_status: str,
+        stabilize_status: Any,
+    ) -> WorkflowState:
+        """Map status to WorkflowState enum.
+
+        Args:
+            highway_status: Highway workflow status string
+            stabilize_status: Stabilize workflow status
+
+        Returns:
+            WorkflowState enum value
+        """
+        from highway.result import WorkflowState
+
+        # Check Highway status first
+        status_map = {
+            "pending": WorkflowState.PENDING,
+            "submitted": WorkflowState.SUBMITTED,
+            "running": WorkflowState.RUNNING,
+            "sleeping": WorkflowState.SLEEPING,
+            "waiting": WorkflowState.WAITING,
+            "completed": WorkflowState.COMPLETED,
+            "failed": WorkflowState.FAILED,
+            "cancelled": WorkflowState.CANCELLED,
+            "canceled": WorkflowState.CANCELLED,
+            "timed_out": WorkflowState.TIMED_OUT,
+        }
+
+        if highway_status.lower() in status_map:
+            return status_map[highway_status.lower()]
+
+        # Fall back to Stabilize status
+        if hasattr(stabilize_status, "name"):
+            stabilize_name = stabilize_status.name.lower()
+            if stabilize_name in ("succeeded", "completed"):
+                return WorkflowState.COMPLETED
+            elif stabilize_name in ("terminal", "failed"):
+                return WorkflowState.FAILED
+            elif stabilize_name in ("cancelled", "canceled"):
+                return WorkflowState.CANCELLED
+            elif stabilize_name == "running":
+                return WorkflowState.RUNNING
+
+        return WorkflowState.PENDING
+
+
+# Backwards compatibility alias
+StabilizeRunner = HighwayRunner
