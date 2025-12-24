@@ -287,3 +287,117 @@ class HighwayRunner:
         except Exception as e:
             logger.error("Failed to cancel workflow %s: %s", run_id, e)
             return False
+
+    def logs(self, run_id: str) -> list[dict[str, Any]]:
+        """Get workflow execution logs.
+
+        Args:
+            run_id: Stabilize execution ID or Highway run ID
+
+        Returns:
+            List of log entries from the workflow execution
+        """
+        logs: list[dict[str, Any]] = []
+
+        try:
+            # Get workflow from Stabilize store
+            result = self._store.retrieve(run_id)
+
+            # Extract logs from stage context/outputs
+            for stage in result.stages:
+                stage_context = stage.context or {}
+                stage_outputs = stage.outputs or {}
+
+                # Check for Highway execution logs
+                highway_result = stage_outputs.get("highway_result", {})
+                if isinstance(highway_result, dict):
+                    output = highway_result.get("output", highway_result)
+                    if isinstance(output, dict):
+                        stdout = output.get("stdout", "")
+                        stderr = output.get("stderr", "")
+
+                        if stdout:
+                            logs.append(
+                                {
+                                    "type": "stdout",
+                                    "stage": stage.ref_id,
+                                    "content": stdout,
+                                }
+                            )
+                        if stderr:
+                            logs.append(
+                                {
+                                    "type": "stderr",
+                                    "stage": stage.ref_id,
+                                    "content": stderr,
+                                }
+                            )
+
+                # Check for task-level logs
+                for task in stage.tasks:
+                    task_outputs = getattr(task, "outputs", {}) or {}
+                    if task_outputs:
+                        logs.append(
+                            {
+                                "type": "task_output",
+                                "task": task.name,
+                                "stage": stage.ref_id,
+                                "content": task_outputs,
+                            }
+                        )
+
+        except Exception as e:
+            logger.warning("Failed to retrieve logs for %s: %s", run_id, e)
+            logs.append(
+                {
+                    "type": "error",
+                    "content": "Failed to retrieve logs: %s" % str(e),
+                }
+            )
+
+        return logs
+
+    def _create_stabilize_workflow(
+        self,
+        workflow_json: dict[str, Any],
+        inputs: dict[str, Any],
+        workflow_id: str | None,
+    ) -> Workflow:
+        """Create Stabilize Workflow with HighwayTask stage.
+
+        Args:
+            workflow_json: Highway workflow definition
+            inputs: Workflow inputs
+            workflow_id: Optional workflow ID
+
+        Returns:
+            Stabilize Workflow ready for execution
+        """
+        workflow_name = workflow_json.get("name", "driver_workflow")
+
+        return Workflow.create(
+            application="highway-driver",
+            name=workflow_name,
+            stages=[
+                StageExecution(
+                    ref_id="highway_execution",
+                    type="highway",
+                    name="Execute Highway Workflow",
+                    context={
+                        "highway_workflow_definition": workflow_json,
+                        "highway_inputs": inputs,
+                        "highway_api_endpoint": self.endpoint,
+                        "highway_api_key": self.api_key,
+                        "highway_poll_interval_seconds": self.poll_interval,
+                    },
+                    tasks=[
+                        TaskExecution.create(
+                            name="Highway Task",
+                            implementing_class="highway",
+                            stage_start=True,
+                            stage_end=True,
+                        ),
+                    ],
+                ),
+            ],
+        )
