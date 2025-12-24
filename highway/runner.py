@@ -27,3 +27,53 @@ from highway.artifact import (
 )
 logger = logging.getLogger(__name__)
 DEFAULT_POLL_INTERVAL = 5.0  # seconds
+StabilizeRunner = HighwayRunner
+
+class HighwayRunner:
+    """Execute workflows via Stabilize + HighwayTask.
+
+    This class provides the execution layer for highway-driver SDK.
+    All Highway API communication goes through Stabilize's HighwayTask.
+
+    Example:
+        runner = HighwayRunner(
+            api_key="hw_k1_...",
+            endpoint="https://highway.solutions",
+        )
+        result = runner.run(workflow_json, inputs={}, timeout=300)
+    """
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        poll_interval: float = DEFAULT_POLL_INTERVAL,
+    ) -> None:
+        """Initialize Highway runner with Stabilize infrastructure.
+
+        Args:
+            api_key: Highway API key (falls back to HIGHWAY_API_KEY env var)
+            endpoint: Highway API endpoint (falls back to HIGHWAY_API_ENDPOINT)
+            poll_interval: Seconds between status polls (default: 5.0)
+        """
+        self.api_key = api_key or os.environ.get("HIGHWAY_API_KEY", "")
+        self.endpoint = (
+            endpoint or os.environ.get("HIGHWAY_API_ENDPOINT", "https://highway.solutions")
+        ).rstrip("/")
+        self.poll_interval = poll_interval
+
+        # Setup Stabilize infrastructure with persistent SQLite
+        db_url = "sqlite:///stabilize.db"
+        self._store = SqliteWorkflowStore(db_url, create_tables=True)
+        self._queue = SqliteQueue(db_url, table_name="queue_messages")
+        self._queue._create_table()
+
+        # Register tasks
+        self._registry = TaskRegistry()
+        self._registry.register("highway", HighwayTask)
+        self._registry.register("http", HTTPTask)
+
+        # Setup processor with all handlers
+        self._processor = QueueProcessor(self._queue)
+        self._register_handlers()
+
+        self._orchestrator = Orchestrator(self._queue)
