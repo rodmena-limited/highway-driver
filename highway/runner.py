@@ -243,3 +243,47 @@ class HighwayRunner:
             started_at=datetime.now(UTC),
             stabilize_execution_id=stabilize_workflow.id,
         )
+
+    def status(self, run_id: str) -> WorkflowResult:
+        """Get workflow execution status.
+
+        Args:
+            run_id: Stabilize execution ID or Highway run ID
+
+        Returns:
+            WorkflowResult with current state
+        """
+        from highway.result import WorkflowResult, WorkflowState
+
+        try:
+            # Try to retrieve from Stabilize store
+            result = self._store.retrieve(run_id)
+            return self._convert_to_workflow_result(result, run_id)
+
+        except Exception as e:
+            logger.warning("Failed to retrieve status for %s: %s", run_id, e)
+            return WorkflowResult(
+                run_id=run_id,
+                status="error",
+                state=WorkflowState.FAILED,
+                error="Failed to retrieve status: %s" % str(e),
+            )
+
+    def cancel(self, run_id: str) -> bool:
+        """Cancel workflow execution.
+
+        Args:
+            run_id: Stabilize execution ID
+
+        Returns:
+            True if cancellation was requested
+        """
+        try:
+            from stabilize.queue.messages import CancelWorkflow
+
+            self._queue.push(CancelWorkflow(execution_id=run_id))
+            logger.info("Cancellation requested for workflow %s", run_id)
+            return True
+        except Exception as e:
+            logger.error("Failed to cancel workflow %s: %s", run_id, e)
+            return False
