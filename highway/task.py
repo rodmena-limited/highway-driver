@@ -63,3 +63,26 @@ class TaskDefinition:
     entrypoint: str | None = None
     func_args: list[Any] | None = None
     func_kwargs: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        """Validate task definition after creation."""
+        if self.timeout <= 0:
+            raise ValueError("timeout must be positive, got %d" % self.timeout)
+        if self.retries < 0:
+            raise ValueError("retries must be non-negative, got %d" % self.retries)
+        if self.retry_delay < 0:
+            raise ValueError("retry_delay must be non-negative, got %s" % self.retry_delay)
+        if self.backoff_rate < 1.0:
+            raise ValueError("backoff_rate must be >= 1.0, got %s" % self.backoff_rate)
+        if self.delay is not None and self.delay.total_seconds() <= 0:
+            raise ValueError("delay must be positive, got %s" % self.delay)
+        # Validate durable/package/entrypoint
+        if self.package is not None:
+            if not self.durable:
+                raise ValueError("package= requires durable=True")
+            if not self.entrypoint:
+                raise ValueError("package= requires entrypoint= (e.g., 'main:run_func')")
+            if ":" not in self.entrypoint:
+                raise ValueError(
+                    "entrypoint must be in 'module:function' format, got '%s'" % self.entrypoint
+                )
