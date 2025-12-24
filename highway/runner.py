@@ -96,3 +96,9 @@ class HighwayRunner:
     def close(self) -> None:
         """Close resources."""
         pass
+
+    def __enter__(self) -> HighwayRunner:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
