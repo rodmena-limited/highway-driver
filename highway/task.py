@@ -86,3 +86,7 @@ class TaskDefinition:
                 raise ValueError(
                     "entrypoint must be in 'module:function' format, got '%s'" % self.entrypoint
                 )
+
+    def get_result_key(self) -> str:
+        """Get the result key for this task in Highway workflow."""
+        return "%s_result" % self.name
