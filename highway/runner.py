@@ -77,3 +77,22 @@ class HighwayRunner:
         self._register_handlers()
 
         self._orchestrator = Orchestrator(self._queue)
+
+    def _register_handlers(self) -> None:
+        """Register all Stabilize message handlers."""
+        handlers = [
+            StartWorkflowHandler(self._queue, self._store),
+            StartStageHandler(self._queue, self._store),
+            StartTaskHandler(self._queue, self._store),
+            RunTaskHandler(self._queue, self._store, self._registry),
+            CompleteTaskHandler(self._queue, self._store),
+            CompleteStageHandler(self._queue, self._store),
+            CompleteWorkflowHandler(self._queue, self._store),
+        ]
+
+        for handler in handlers:
+            self._processor.register_handler(handler)
+
+    def close(self) -> None:
+        """Close resources."""
+        pass
