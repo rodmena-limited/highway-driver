@@ -1,21 +1,35 @@
+"""Task definition dataclass for Highway Driver.
+
+A TaskDefinition captures all metadata about a decorated function
+that will be converted to a Highway workflow task.
+"""
+
 from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from highway.ast_utils import FunctionAnalysis
+
+
 class TaskType(Enum):
     """Type of task execution."""
-    SHELL = 'shell'
-    PYTHON = 'python'
-    HTTP = 'http'
-    TOOL = 'tool'
-    WORKFLOW = 'workflow'
-    FOREACH = 'foreach'
-    WHILE = 'while'
-    EMIT = 'emit'
-    WAIT_FOR = 'wait_for'
+
+    SHELL = "shell"
+    PYTHON = "python"
+    HTTP = "http"
+    TOOL = "tool"  # Generic Highway tool (e.g., tools.llm.call)
+    WORKFLOW = "workflow"  # Execute another workflow
+    # Control flow operators
+    FOREACH = "foreach"  # ForEach loop over collection
+    WHILE = "while"  # While loop with condition
+    EMIT = "emit"  # Emit event
+    WAIT_FOR = "wait_for"  # Wait for event
+
 
 @dataclass
 class TaskDefinition:
@@ -38,6 +52,7 @@ class TaskDefinition:
         workflow_definition_id: Specific workflow definition ID for WORKFLOW type
         analysis: AST analysis of the function (populated by Driver)
     """
+
     name: str
     func: Callable[..., Any]
     task_type: TaskType
@@ -53,16 +68,18 @@ class TaskDefinition:
     workflow_name: str | None = None
     workflow_definition_id: str | None = None
     analysis: FunctionAnalysis | None = None
-    items: str | None = None
-    condition: str | None = None
-    event_name: str | None = None
-    event_payload: dict[str, Any] | None = None
-    event_timeout: int | None = None
-    durable: bool = False
-    package: str | None = None
-    entrypoint: str | None = None
-    func_args: list[Any] | None = None
-    func_kwargs: dict[str, Any] | None = None
+    # Control flow fields
+    items: str | None = None  # ForEach: variable reference for collection (e.g., "{{my_list}}")
+    condition: str | None = None  # While/Condition: expression (e.g., "{{counter}} < 10")
+    event_name: str | None = None  # Emit/WaitFor: event name
+    event_payload: dict[str, Any] | None = None  # Emit: event payload
+    event_timeout: int | None = None  # WaitFor: timeout in seconds
+    # Durable Python execution fields (tools.python.run)
+    durable: bool = False  # Use tools.python.run with DurableContext
+    package: str | None = None  # Path to Python package directory
+    entrypoint: str | None = None  # Module:function path (e.g., "main:run_calculation")
+    func_args: list[Any] | None = None  # Positional args to pass to entrypoint function
+    func_kwargs: dict[str, Any] | None = None  # Keyword args to pass to entrypoint function
 
     def __post_init__(self) -> None:
         """Validate task definition after creation."""
@@ -90,3 +107,20 @@ class TaskDefinition:
     def get_result_key(self) -> str:
         """Get the result key for this task in Highway workflow."""
         return "%s_result" % self.name
+
+    def validate_depends(self, available_tasks: set[str]) -> list[str]:
+        """Validate that all dependencies exist.
+
+        Args:
+            available_tasks: Set of registered task names
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        errors = []
+        for dep in self.depends:
+            if dep not in available_tasks:
+                errors.append(
+                    "Task '%s' depends on '%s' which is not registered" % (self.name, dep)
+                )
+        return errors
