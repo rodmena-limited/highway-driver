@@ -201,3 +201,113 @@ def test_inputs_in_workflow_json() -> None:
     )
 
     assert workflow_json["variables"] == {"message": "hello", "count": 42}
+
+def test_python_task_generates_code_exec() -> None:
+    """Verify py=True generates tools.code.exec with wrapped source."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def compute_sum():
+        return {"sum": 1 + 2}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["compute_sum"]
+
+    assert task_json["function"] == "tools.code.exec"
+    assert "code" in task_json["kwargs"]
+    assert "compute_sum" in task_json["kwargs"]["code"]
+    assert "__HIGHWAY_RESULT__" in task_json["kwargs"]["code"]
+    assert task_json["kwargs"]["timeout"] == 300
+
+def test_generic_tool_task() -> None:
+    """Verify tool= parameter generates correct workflow JSON."""
+    driver = Driver()
+
+    @driver.task(tool="tools.llm.call")
+    def summarize():
+        return {
+            "prompt": "Summarize this",
+            "model": "claude-3-haiku-20240307",
+        }
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["summarize"]
+
+    assert task_json["function"] == "tools.llm.call"
+    assert task_json["kwargs"]["prompt"] == "Summarize this"
+    assert task_json["kwargs"]["model"] == "claude-3-haiku-20240307"
+
+def test_workflow_execution_by_name() -> None:
+    """Verify workflow= parameter generates tools.workflow.execute."""
+    driver = Driver()
+
+    @driver.task(workflow="daily_report")
+    def run_report():
+        return {"inputs": {"date": "2024-01-01"}}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["run_report"]
+
+    assert task_json["function"] == "tools.workflow.execute"
+    assert task_json["kwargs"]["workflow_name"] == "daily_report"
+    assert task_json["kwargs"]["inputs"] == {"date": "2024-01-01"}
+
+def test_workflow_execution_by_id() -> None:
+    """Verify workflow_id= parameter generates tools.workflow.execute with definition_id."""
+    driver = Driver()
+
+    @driver.task(workflow_id="550e8400-e29b-41d4-a716-446655440000")
+    def run_specific():
+        return {"inputs": {"mode": "production"}}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["run_specific"]
+
+    assert task_json["function"] == "tools.workflow.execute"
+    assert task_json["kwargs"]["definition_id"] == "550e8400-e29b-41d4-a716-446655440000"
+    assert task_json["kwargs"]["inputs"] == {"mode": "production"}
+
+def test_tool_with_variable_interpolation() -> None:
+    """Verify {{variable}} syntax passes through for Highway resolution."""
+    driver = Driver()
+
+    @driver.task(shell=True)
+    def backup():
+        return "pg_dump > backup.sql"
+
+    @driver.task(tool="tools.llm.call", depends=["backup"])
+    def analyze():
+        return {
+            "prompt": "Analyze: {{backup_result.stdout}}",
+            "model": "gpt-4",
+        }
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["analyze"]
+
+    # Verify variable syntax is preserved for Highway
+    assert task_json["kwargs"]["prompt"] == "Analyze: {{backup_result.stdout}}"
+
+def test_foreach_decorator_generates_foreach_operator() -> None:
+    """Verify @driver.foreach generates correct foreach operator JSON."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def get_items():
+        return {"items": [1, 2, 3]}
+
+    @driver.foreach(items="{{get_items_result.items}}", depends=["get_items"])
+    def process_item():
+        return {"processed": True}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["process_item"]
+
+    assert task_json["operator_type"] == "foreach"
+    assert task_json["items"] == "{{get_items_result.items}}"
+    assert "loop_body" in task_json
+    assert isinstance(task_json["loop_body"], list)
+    assert task_json["loop_body"][0]["function"] == "tools.code.exec"
+    assert "process_item" in task_json["loop_body"][0]["kwargs"]["code"]
+    assert task_json["loop_body"][0]["is_internal_loop_task"] is True
+    assert task_json["parallel"] is False
