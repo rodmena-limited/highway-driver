@@ -100,3 +100,104 @@ def test_workflow_json_structure() -> None:
     assert "tasks" in workflow_json
     assert "start_task" in workflow_json
     assert workflow_json["timeout_seconds"] == 300
+
+def test_retry_configuration_in_json() -> None:
+    """Verify retry config is correctly added to workflow JSON."""
+    driver = Driver()
+
+    @driver.task(shell=True, retries=3, retry_delay=2.0, backoff=1.5)
+    def retryable_task():
+        return "echo 'retry'"
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["retryable_task"]
+
+    assert "retry_policy" in task_json
+    assert task_json["retry_policy"]["max_attempts"] == 4  # 3 retries + 1 initial
+    assert task_json["retry_policy"]["initial_interval_seconds"] == 2.0
+    assert task_json["retry_policy"]["backoff_coefficient"] == 1.5
+
+def test_dependency_validation() -> None:
+    """Verify missing dependencies are caught."""
+    driver = Driver()
+
+    @driver.task(shell=True, depends=["nonexistent"])
+    def dependent_task():
+        return "echo 'depends'"
+
+    with pytest.raises(TaskDefinitionError) as exc_info:
+        driver.run()
+
+    assert "nonexistent" in str(exc_info.value)
+
+def test_duplicate_task_registration() -> None:
+    """Verify duplicate task names are caught."""
+    driver = Driver()
+
+    @driver.task(shell=True)
+    def my_task():
+        return "echo 'first'"
+
+    with pytest.raises(TaskDefinitionError) as exc_info:
+
+        @driver.task(shell=True)
+        def my_task():
+            return "echo 'second'"
+
+    assert "already registered" in str(exc_info.value)
+
+def test_no_tasks_error() -> None:
+    """Verify error when running with no tasks."""
+    driver = Driver()
+
+    with pytest.raises(TaskDefinitionError) as exc_info:
+        driver.run()
+
+    assert "No tasks registered" in str(exc_info.value)
+
+def test_task_type_validation() -> None:
+    """Verify exactly one task type must be specified."""
+    driver = Driver()
+
+    # No type specified
+    with pytest.raises(TaskDefinitionError) as exc_info:
+
+        @driver.task()
+        def no_type():
+            return "echo 'bad'"
+
+    assert "Must specify exactly one task type" in str(exc_info.value)
+
+    # Multiple types
+    driver2 = Driver()
+    with pytest.raises(TaskDefinitionError) as exc_info:
+
+        @driver2.task(shell=True, py=True)
+        def multi_type():
+            return "echo 'bad'"
+
+    assert "Only one task type" in str(exc_info.value)
+
+    # Multiple new types
+    driver3 = Driver()
+    with pytest.raises(TaskDefinitionError) as exc_info:
+
+        @driver3.task(tool="tools.llm.call", workflow="my_workflow")
+        def multi_new_type():
+            return {}
+
+    assert "Only one task type" in str(exc_info.value)
+
+def test_inputs_in_workflow_json() -> None:
+    """Verify inputs are included in workflow JSON variables."""
+    driver = Driver()
+
+    @driver.task(shell=True)
+    def echo_input():
+        return "echo '{{inputs.message}}'"
+
+    workflow_json = driver._build_workflow(
+        workflow_timeout=300, inputs={"message": "hello", "count": 42}
+    )
+
+    assert workflow_json["variables"] == {"message": "hello", "count": 42}
