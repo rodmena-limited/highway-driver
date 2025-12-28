@@ -311,3 +311,118 @@ def test_foreach_decorator_generates_foreach_operator() -> None:
     assert "process_item" in task_json["loop_body"][0]["kwargs"]["code"]
     assert task_json["loop_body"][0]["is_internal_loop_task"] is True
     assert task_json["parallel"] is False
+
+def test_while_loop_decorator_generates_while_operator() -> None:
+    """Verify @driver.while_loop generates correct while operator JSON.
+
+    Note: while_loop defaults to durable=True for DurableContext support.
+    """
+    driver = Driver()
+
+    @driver.task(py=True)
+    def init():
+        return {"counter": 0, "limit": 5}
+
+    @driver.while_loop(condition="{{counter}} < {{limit}}", depends=["init"])
+    def increment():
+        return {"incremented": True}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["increment"]
+
+    assert task_json["operator_type"] == "while"
+    assert task_json["condition"] == "{{counter}} < {{limit}}"
+    assert "loop_body" in task_json
+    assert isinstance(task_json["loop_body"], list)
+    # Default durable=True uses tools.python.run
+    assert task_json["loop_body"][0]["function"] == "tools.python.run"
+    assert task_json["loop_body"][0]["is_internal_loop_task"] is True
+
+def test_while_loop_non_durable_uses_code_exec() -> None:
+    """Verify @driver.while_loop with durable=False uses tools.code.exec."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def init():
+        return {"counter": 0, "limit": 5}
+
+    @driver.while_loop(condition="{{counter}} < {{limit}}", depends=["init"], durable=False)
+    def increment():
+        return {"incremented": True}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["increment"]
+
+    assert task_json["operator_type"] == "while"
+    assert task_json["loop_body"][0]["function"] == "tools.code.exec"
+    assert "code" in task_json["loop_body"][0]["kwargs"]
+
+def test_emit_decorator_generates_emit_event_operator() -> None:
+    """Verify @driver.emit generates correct emit_event operator JSON."""
+    driver = Driver()
+
+    @driver.emit(event="workflow_ready", payload={"status": "ready"})
+    def send_signal():
+        pass
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["send_signal"]
+
+    assert task_json["operator_type"] == "emit_event"
+    assert task_json["event_name"] == "workflow_ready"
+    assert task_json["payload"] == {"status": "ready"}
+
+def test_wait_for_decorator_generates_wait_for_event_operator() -> None:
+    """Verify @driver.wait_for generates correct wait_for_event operator JSON."""
+    driver = Driver()
+
+    @driver.wait_for(event="external_signal", timeout=60)
+    def receive_signal():
+        pass
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["receive_signal"]
+
+    assert task_json["operator_type"] == "wait_for_event"
+    assert task_json["event_name"] == "external_signal"
+    assert task_json["timeout_seconds"] == 60
+
+def test_emit_wait_for_chain() -> None:
+    """Verify emit -> wait_for chain works correctly."""
+    driver = Driver()
+
+    @driver.emit(event="task_complete", payload={"id": "123"})
+    def emit_completion():
+        pass
+
+    @driver.wait_for(event="task_complete", timeout=30, depends=["emit_completion"])
+    def wait_completion():
+        pass
+
+    @driver.task(py=True, depends=["wait_completion"])
+    def verify():
+        return {"chain_complete": True}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+
+    emit_task = workflow_json["tasks"]["emit_completion"]
+    wait_task = workflow_json["tasks"]["wait_completion"]
+    verify_task = workflow_json["tasks"]["verify"]
+
+    assert emit_task["operator_type"] == "emit_event"
+    assert wait_task["operator_type"] == "wait_for_event"
+    assert wait_task["dependencies"] == ["emit_completion"]
+    assert verify_task["dependencies"] == ["wait_completion"]
+
+def test_foreach_with_timeout() -> None:
+    """Verify foreach respects timeout parameter."""
+    driver = Driver()
+
+    @driver.foreach(items="{{items}}", timeout=60)
+    def process():
+        return {"done": True}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["process"]
+
+    assert task_json["loop_body"][0]["kwargs"]["timeout"] == 60
