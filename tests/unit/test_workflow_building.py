@@ -426,3 +426,91 @@ def test_foreach_with_timeout() -> None:
     task_json = workflow_json["tasks"]["process"]
 
     assert task_json["loop_body"][0]["kwargs"]["timeout"] == 60
+
+def test_durable_task_generates_python_run() -> None:
+    """Verify durable=True generates tools.python.run DSL."""
+    driver = Driver()
+
+    @driver.task(durable=True)
+    def my_durable_func():
+        return {"result": 42}
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["my_durable_func"]
+
+    assert task_json["function"] == "tools.python.run"
+    # Uses wrapper function for ctx injection
+    assert task_json["args"] == ["driver_tasks.tasks._hw_my_durable_func"]
+    assert task_json["kwargs"] == {"artifact_id": "{{_artifact_id}}"}
+
+def test_durable_task_with_package() -> None:
+    """Verify package= parameter generates correct entrypoint."""
+    driver = Driver()
+
+    @driver.task(durable=True, package="./my_package", entrypoint="main:run")
+    def my_task():
+        pass
+
+    workflow_json = driver._build_workflow(workflow_timeout=300)
+    task_json = workflow_json["tasks"]["my_task"]
+
+    assert task_json["function"] == "tools.python.run"
+    assert task_json["args"] == ["my_package.main.run"]
+    assert task_json["kwargs"] == {"artifact_id": "{{_artifact_id}}"}
+
+def test_package_requires_durable() -> None:
+    """Verify package= requires durable=True."""
+    driver = Driver()
+
+    with pytest.raises(ValueError) as exc_info:
+
+        @driver.task(package="./my_package", entrypoint="main:run")
+        def bad_task():
+            pass
+
+    assert "durable=True" in str(exc_info.value)
+
+def test_package_requires_entrypoint() -> None:
+    """Verify package= requires entrypoint=."""
+    driver = Driver()
+
+    with pytest.raises(ValueError) as exc_info:
+
+        @driver.task(durable=True, package="./my_package")
+        def bad_task():
+            pass
+
+    assert "entrypoint" in str(exc_info.value)
+
+def test_needs_artifact_returns_true_for_durable() -> None:
+    """Verify needs_artifact() returns True when durable tasks exist."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def regular_task():
+        return {"result": 1}
+
+    assert driver.needs_artifact() is False
+
+    @driver.task(durable=True)
+    def durable_task():
+        return {"result": 2}
+
+    assert driver.needs_artifact() is True
+
+def test_get_durable_functions_returns_only_durable() -> None:
+    """Verify get_durable_functions() returns only durable functions."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def regular():
+        return {"a": 1}
+
+    @driver.task(durable=True)
+    def durable():
+        return {"b": 2}
+
+    funcs = driver.get_durable_functions()
+    assert "regular" not in funcs
+    assert "durable" in funcs
+    assert funcs["durable"].__name__ == "durable"
