@@ -1,4 +1,22 @@
+#!/usr/bin/env python3
+"""Phase 2: Retry & Failure State Machine Tests.
+
+Port of demo_matrix/phase2_retry.py to Highway Driver SDK.
+
+Tests:
+- fail_twice_pass_third: Retry mechanism with eventual success
+- non_retryable_error: ValueError fails immediately without retry
+
+Note: Tests using ctx.set_variable/get_variable require tools.python.run
+which is not yet supported in driver SDK. Using file-based state instead.
+
+Run with:
+    export HIGHWAY_API_KEY="hw_k1_..."
+    python examples/demo_matrix/phase2_retry.py
+"""
+
 from highway import Driver
+
 
 def test_fail_twice_pass_third() -> None:
     """Test: Fails 2x, passes on 3rd attempt."""
@@ -35,6 +53,7 @@ def test_fail_twice_pass_third() -> None:
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Retry mechanism worked - succeeded on 3rd attempt\n")
 
+
 def test_non_retryable_error() -> None:
     """Test: ValueError fails immediately without retry."""
     driver = Driver()
@@ -53,6 +72,7 @@ def test_non_retryable_error() -> None:
     # Note: Highway may or may not distinguish ValueError from RuntimeError
     # The test passes if it either fails or completes (depending on retry classification)
     print("Result: %s (ValueError behavior documented)\n" % result.status)
+
 
 def test_simple_retry_success() -> None:
     """Test: Simple retry that eventually succeeds."""
@@ -89,3 +109,22 @@ def test_simple_retry_success() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Retry with backoff succeeded\n")
+
+
+def run_all() -> None:
+    """Run all Phase 2 tests."""
+    print("\n" + "=" * 60)
+    print("PHASE 2: Retry & Failure State Machine Tests")
+    print("=" * 60 + "\n")
+
+    test_fail_twice_pass_third()
+    test_non_retryable_error()
+    test_simple_retry_success()
+
+    print("=" * 60)
+    print("PHASE 2 COMPLETE: All tests executed!")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    run_all()
