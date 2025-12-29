@@ -1,6 +1,16 @@
+#!/usr/bin/env python3
+"""Unit tests for workflow building and validation.
+
+These tests verify workflow JSON generation and parameter validation
+without requiring Highway API or execution.
+"""
+
 from datetime import timedelta
+
 import pytest
+
 from highway import Driver, TaskDefinitionError
+
 
 def test_schedule_with_timedelta() -> None:
     """Verify timedelta schedule is converted to interval string."""
@@ -12,6 +22,7 @@ def test_schedule_with_timedelta() -> None:
 
     task_def = driver.tasks["hourly_task"]
     assert task_def.schedule == "@every 3600s"
+
 
 def test_delay_workflow_json_generation() -> None:
     """Verify delay generates correct wait task in workflow JSON."""
@@ -42,6 +53,7 @@ def test_delay_workflow_json_generation() -> None:
     delayed_task = workflow_json["tasks"]["delayed_task"]
     assert delayed_task["dependencies"] == ["delayed_task_wait"]
 
+
 def test_delay_and_schedule_not_allowed() -> None:
     """Verify delay and schedule cannot be used together."""
     driver = Driver()
@@ -54,6 +66,7 @@ def test_delay_and_schedule_not_allowed() -> None:
 
     assert "delay and schedule" in str(exc_info.value).lower()
 
+
 def test_delay_negative_validation() -> None:
     """Verify negative delay raises error."""
     driver = Driver()
@@ -65,6 +78,7 @@ def test_delay_negative_validation() -> None:
             return "echo 'bad'"
 
     assert "delay must be positive" in str(exc_info.value)
+
 
 def test_delay_start_task_no_dependencies() -> None:
     """Verify delay works on start task with no dependencies."""
@@ -85,6 +99,7 @@ def test_delay_start_task_no_dependencies() -> None:
     # start_task should be the wait task, not the original
     assert workflow_json["start_task"] == "delayed_start_wait"
 
+
 def test_workflow_json_structure() -> None:
     """Verify basic workflow JSON structure."""
     driver = Driver()
@@ -100,6 +115,7 @@ def test_workflow_json_structure() -> None:
     assert "tasks" in workflow_json
     assert "start_task" in workflow_json
     assert workflow_json["timeout_seconds"] == 300
+
 
 def test_retry_configuration_in_json() -> None:
     """Verify retry config is correctly added to workflow JSON."""
@@ -117,6 +133,7 @@ def test_retry_configuration_in_json() -> None:
     assert task_json["retry_policy"]["initial_interval_seconds"] == 2.0
     assert task_json["retry_policy"]["backoff_coefficient"] == 1.5
 
+
 def test_dependency_validation() -> None:
     """Verify missing dependencies are caught."""
     driver = Driver()
@@ -129,6 +146,7 @@ def test_dependency_validation() -> None:
         driver.run()
 
     assert "nonexistent" in str(exc_info.value)
+
 
 def test_duplicate_task_registration() -> None:
     """Verify duplicate task names are caught."""
@@ -146,6 +164,7 @@ def test_duplicate_task_registration() -> None:
 
     assert "already registered" in str(exc_info.value)
 
+
 def test_no_tasks_error() -> None:
     """Verify error when running with no tasks."""
     driver = Driver()
@@ -154,6 +173,7 @@ def test_no_tasks_error() -> None:
         driver.run()
 
     assert "No tasks registered" in str(exc_info.value)
+
 
 def test_task_type_validation() -> None:
     """Verify exactly one task type must be specified."""
@@ -188,6 +208,7 @@ def test_task_type_validation() -> None:
 
     assert "Only one task type" in str(exc_info.value)
 
+
 def test_inputs_in_workflow_json() -> None:
     """Verify inputs are included in workflow JSON variables."""
     driver = Driver()
@@ -201,6 +222,7 @@ def test_inputs_in_workflow_json() -> None:
     )
 
     assert workflow_json["variables"] == {"message": "hello", "count": 42}
+
 
 def test_python_task_generates_code_exec() -> None:
     """Verify py=True generates tools.code.exec with wrapped source."""
@@ -218,6 +240,7 @@ def test_python_task_generates_code_exec() -> None:
     assert "compute_sum" in task_json["kwargs"]["code"]
     assert "__HIGHWAY_RESULT__" in task_json["kwargs"]["code"]
     assert task_json["kwargs"]["timeout"] == 300
+
 
 def test_generic_tool_task() -> None:
     """Verify tool= parameter generates correct workflow JSON."""
@@ -237,6 +260,7 @@ def test_generic_tool_task() -> None:
     assert task_json["kwargs"]["prompt"] == "Summarize this"
     assert task_json["kwargs"]["model"] == "claude-3-haiku-20240307"
 
+
 def test_workflow_execution_by_name() -> None:
     """Verify workflow= parameter generates tools.workflow.execute."""
     driver = Driver()
@@ -252,6 +276,7 @@ def test_workflow_execution_by_name() -> None:
     assert task_json["kwargs"]["workflow_name"] == "daily_report"
     assert task_json["kwargs"]["inputs"] == {"date": "2024-01-01"}
 
+
 def test_workflow_execution_by_id() -> None:
     """Verify workflow_id= parameter generates tools.workflow.execute with definition_id."""
     driver = Driver()
@@ -266,6 +291,7 @@ def test_workflow_execution_by_id() -> None:
     assert task_json["function"] == "tools.workflow.execute"
     assert task_json["kwargs"]["definition_id"] == "550e8400-e29b-41d4-a716-446655440000"
     assert task_json["kwargs"]["inputs"] == {"mode": "production"}
+
 
 def test_tool_with_variable_interpolation() -> None:
     """Verify {{variable}} syntax passes through for Highway resolution."""
@@ -287,6 +313,12 @@ def test_tool_with_variable_interpolation() -> None:
 
     # Verify variable syntax is preserved for Highway
     assert task_json["kwargs"]["prompt"] == "Analyze: {{backup_result.stdout}}"
+
+
+# =============================================================================
+# Control Flow Decorator Tests
+# =============================================================================
+
 
 def test_foreach_decorator_generates_foreach_operator() -> None:
     """Verify @driver.foreach generates correct foreach operator JSON."""
@@ -311,6 +343,7 @@ def test_foreach_decorator_generates_foreach_operator() -> None:
     assert "process_item" in task_json["loop_body"][0]["kwargs"]["code"]
     assert task_json["loop_body"][0]["is_internal_loop_task"] is True
     assert task_json["parallel"] is False
+
 
 def test_while_loop_decorator_generates_while_operator() -> None:
     """Verify @driver.while_loop generates correct while operator JSON.
@@ -338,6 +371,7 @@ def test_while_loop_decorator_generates_while_operator() -> None:
     assert task_json["loop_body"][0]["function"] == "tools.python.run"
     assert task_json["loop_body"][0]["is_internal_loop_task"] is True
 
+
 def test_while_loop_non_durable_uses_code_exec() -> None:
     """Verify @driver.while_loop with durable=False uses tools.code.exec."""
     driver = Driver()
@@ -357,6 +391,7 @@ def test_while_loop_non_durable_uses_code_exec() -> None:
     assert task_json["loop_body"][0]["function"] == "tools.code.exec"
     assert "code" in task_json["loop_body"][0]["kwargs"]
 
+
 def test_emit_decorator_generates_emit_event_operator() -> None:
     """Verify @driver.emit generates correct emit_event operator JSON."""
     driver = Driver()
@@ -372,6 +407,7 @@ def test_emit_decorator_generates_emit_event_operator() -> None:
     assert task_json["event_name"] == "workflow_ready"
     assert task_json["payload"] == {"status": "ready"}
 
+
 def test_wait_for_decorator_generates_wait_for_event_operator() -> None:
     """Verify @driver.wait_for generates correct wait_for_event operator JSON."""
     driver = Driver()
@@ -386,6 +422,7 @@ def test_wait_for_decorator_generates_wait_for_event_operator() -> None:
     assert task_json["operator_type"] == "wait_for_event"
     assert task_json["event_name"] == "external_signal"
     assert task_json["timeout_seconds"] == 60
+
 
 def test_emit_wait_for_chain() -> None:
     """Verify emit -> wait_for chain works correctly."""
@@ -414,6 +451,7 @@ def test_emit_wait_for_chain() -> None:
     assert wait_task["dependencies"] == ["emit_completion"]
     assert verify_task["dependencies"] == ["wait_completion"]
 
+
 def test_foreach_with_timeout() -> None:
     """Verify foreach respects timeout parameter."""
     driver = Driver()
@@ -426,6 +464,12 @@ def test_foreach_with_timeout() -> None:
     task_json = workflow_json["tasks"]["process"]
 
     assert task_json["loop_body"][0]["kwargs"]["timeout"] == 60
+
+
+# =============================================================================
+# Durable Python Task Tests (tools.python.run)
+# =============================================================================
+
 
 def test_durable_task_generates_python_run() -> None:
     """Verify durable=True generates tools.python.run DSL."""
@@ -443,6 +487,7 @@ def test_durable_task_generates_python_run() -> None:
     assert task_json["args"] == ["driver_tasks.tasks._hw_my_durable_func"]
     assert task_json["kwargs"] == {"artifact_id": "{{_artifact_id}}"}
 
+
 def test_durable_task_with_package() -> None:
     """Verify package= parameter generates correct entrypoint."""
     driver = Driver()
@@ -458,6 +503,7 @@ def test_durable_task_with_package() -> None:
     assert task_json["args"] == ["my_package.main.run"]
     assert task_json["kwargs"] == {"artifact_id": "{{_artifact_id}}"}
 
+
 def test_package_requires_durable() -> None:
     """Verify package= requires durable=True."""
     driver = Driver()
@@ -470,6 +516,7 @@ def test_package_requires_durable() -> None:
 
     assert "durable=True" in str(exc_info.value)
 
+
 def test_package_requires_entrypoint() -> None:
     """Verify package= requires entrypoint=."""
     driver = Driver()
@@ -481,6 +528,7 @@ def test_package_requires_entrypoint() -> None:
             pass
 
     assert "entrypoint" in str(exc_info.value)
+
 
 def test_needs_artifact_returns_true_for_durable() -> None:
     """Verify needs_artifact() returns True when durable tasks exist."""
@@ -498,6 +546,7 @@ def test_needs_artifact_returns_true_for_durable() -> None:
 
     assert driver.needs_artifact() is True
 
+
 def test_get_durable_functions_returns_only_durable() -> None:
     """Verify get_durable_functions() returns only durable functions."""
     driver = Driver()
@@ -514,3 +563,100 @@ def test_get_durable_functions_returns_only_durable() -> None:
     assert "regular" not in funcs
     assert "durable" in funcs
     assert funcs["durable"].__name__ == "durable"
+
+
+def test_wrapper_generation_handles_ctx_detection() -> None:
+    """Verify wrapper functions correctly detect ctx parameter.
+
+    Tests the critical ctx injection fix:
+    - Functions WITH ctx param: wrapper passes ctx through
+    - Functions WITHOUT ctx param: wrapper sets thread-local for get_context()
+    """
+    import sys
+    import tempfile
+    import zipfile
+
+    from highway.artifact import package_functions
+
+    # Function WITHOUT ctx - should use get_context()
+    def without_ctx(order_id: int):
+        return {"order_id": order_id}
+
+    # Function WITH ctx - should get ctx passed through
+    def with_ctx(ctx, order_id: int):
+        return {"order_id": order_id, "ctx_present": True}
+
+    # Package them
+    result = package_functions({
+        "without_ctx": without_ctx,
+        "with_ctx": with_ctx,
+    })
+
+    # Extract and test
+    tmpdir = tempfile.mkdtemp()
+    with zipfile.ZipFile(result.file_path, "r") as zf:
+        zf.extractall(tmpdir)
+
+    sys.path.insert(0, tmpdir)
+    try:
+        from driver_tasks import tasks
+
+        # Mock DurableContext
+        class MockCtx:
+            def __init__(self):
+                self.variables = {}
+
+            def set_variable(self, k, v):
+                self.variables[k] = v
+
+            def get_variable(self, k):
+                return self.variables.get(k)
+
+        mock_ctx = MockCtx()
+
+        # Test wrapper for function WITHOUT ctx
+        result1 = tasks._hw_without_ctx(mock_ctx, 123)
+        assert result1 == {"order_id": 123}
+
+        # Test wrapper for function WITH ctx
+        result2 = tasks._hw_with_ctx(mock_ctx, 456)
+        assert result2 == {"order_id": 456, "ctx_present": True}
+
+    finally:
+        sys.path.remove(tmpdir)
+
+
+def test_driver_name_parameter() -> None:
+    """Verify Driver name parameter sets workflow name."""
+    driver = Driver(name="my_custom_workflow")
+
+    @driver.task(shell=True)
+    def my_task():
+        return "echo test"
+
+    workflow = driver._build_workflow()
+    assert workflow["name"] == "my_custom_workflow"
+
+
+def test_driver_name_auto_derived() -> None:
+    """Verify workflow name auto-derives from first task when not specified."""
+    driver = Driver()
+
+    @driver.task(shell=True)
+    def process_orders():
+        return "echo orders"
+
+    workflow = driver._build_workflow()
+    assert workflow["name"] == "workflow_process_orders"
+
+
+def test_driver_name_converts_dashes_to_underscores() -> None:
+    """Verify dashes in workflow name are converted to underscores."""
+    driver = Driver(name="my-workflow-name")
+
+    @driver.task(shell=True)
+    def my_task():
+        return "echo test"
+
+    workflow = driver._build_workflow()
+    assert workflow["name"] == "my_workflow_name"
