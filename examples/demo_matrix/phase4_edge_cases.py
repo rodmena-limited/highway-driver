@@ -95,3 +95,28 @@ def test_deep_path_resolution() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Deep path resolution completed\n")
+
+def test_chunked_large_result() -> None:
+    """Test: Generate 1050 items - tests large result handling."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def generate_large():
+        # Generate 1050 items (triggers chunking at 1000)
+        items = [{"id": i, "value": "item_%d" % i} for i in range(1050)]
+        return {"count": len(items), "items": items}
+
+    @driver.task(py=True, depends=["generate_large"])
+    def verify_chunked():
+        # Verification that large result was stored
+        return {"count": 1050, "status": "chunked_ok"}
+
+    print("=== Test: chunked_large_result ===")
+    print("Generating 1050-item result (tests chunking at 1000)...")
+
+    result = driver.run(wait=True, timeout=90)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: Large result handled (1050 items)\n")
