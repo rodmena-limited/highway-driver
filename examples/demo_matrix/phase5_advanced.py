@@ -1,4 +1,18 @@
+#!/usr/bin/env python3
+"""Phase 5: Advanced Pattern Tests.
+
+Port of demo_matrix/phase5_advanced.py to Highway Driver SDK.
+
+Tests:
+- diamond_pattern: A → (B, C in parallel) → D
+
+Run with:
+    export HIGHWAY_API_KEY="hw_k1_..."
+    python examples/demo_matrix/phase5_advanced.py
+"""
+
 from highway import Driver
+
 
 def test_diamond_pattern() -> None:
     """Test: Diamond DAG pattern A → (B, C) → D."""
@@ -51,6 +65,7 @@ def test_diamond_pattern() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Diamond pattern executed correctly\n")
+
 
 def test_nested_parallel() -> None:
     """Test: Nested parallel execution - multiple parallel groups."""
@@ -112,6 +127,7 @@ def test_nested_parallel() -> None:
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Nested parallel groups completed\n")
 
+
 def test_linear_chain() -> None:
     """Test: Simple linear chain A → B → C → D."""
     driver = Driver()
@@ -141,3 +157,22 @@ def test_linear_chain() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Linear chain executed in order\n")
+
+
+def run_all() -> None:
+    """Run all Phase 5 tests."""
+    print("\n" + "=" * 60)
+    print("PHASE 5: Advanced Pattern Tests")
+    print("=" * 60 + "\n")
+
+    test_diamond_pattern()
+    test_nested_parallel()
+    test_linear_chain()
+
+    print("=" * 60)
+    print("PHASE 5 COMPLETE: All tests passed!")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    run_all()
