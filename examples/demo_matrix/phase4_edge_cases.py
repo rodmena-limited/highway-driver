@@ -162,3 +162,30 @@ def test_while_zero_iterations() -> None:
     print("Status: %s" % result.status)
     print("Run ID: %s" % result.run_id)
     print("Result: %s (while_loop limitation documented)\n" % result.status)
+
+def test_simple_foreach() -> None:
+    """Test: ForEach over small list - basic iteration test."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def init_list():
+        return {"items": [1, 2, 3, 4, 5]}
+
+    @driver.foreach(items="{{init_list_result.items}}", depends=["init_list"])
+    def process_each():
+        # Process each item (item available as {{current_item}})
+        return {"processed": True}
+
+    @driver.task(py=True, depends=["process_each"])
+    def verify_foreach():
+        return {"status": "foreach_ok", "items_processed": 5}
+
+    print("=== Test: simple_foreach ===")
+    print("Running ForEach over [1,2,3,4,5]...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    # ForEach behavior documented
+    print("Result: %s (foreach behavior documented)\n" % result.status)
