@@ -1,4 +1,21 @@
+#!/usr/bin/env python3
+"""Phase 3: Concurrency Race Condition Tests.
+
+Port of demo_matrix/phase3_concurrency.py to Highway Driver SDK.
+
+Tests:
+- parallel_counter: 20 branches execute in parallel
+- event_coordination: Emit → WaitFor event chain
+- checkpoint_conflict: 2 branches competing for shared state
+- fork_join_stress: Fork 10 branches, all must join
+
+Run with:
+    export HIGHWAY_API_KEY="hw_k1_..."
+    python examples/demo_matrix/phase3_concurrency.py
+"""
+
 from highway import Driver
+
 
 def test_parallel_counter() -> None:
     """Test: 20 parallel branches incrementing counters."""
@@ -105,6 +122,7 @@ def test_parallel_counter() -> None:
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: 20 parallel branches completed\n")
 
+
 def test_event_coordination() -> None:
     """Test: Event emit followed by event wait coordination."""
     driver = Driver()
@@ -142,6 +160,7 @@ def test_event_coordination() -> None:
     print("Run ID: %s" % result.run_id)
     # Event coordination may not be fully supported yet
     print("Result: %s (event coordination behavior documented)\n" % result.status)
+
 
 def test_checkpoint_conflict() -> None:
     """Test: 2 branches competing for shared state."""
@@ -182,6 +201,7 @@ def test_checkpoint_conflict() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Parallel conflict handled\n")
+
 
 def test_fork_join_stress() -> None:
     """Test: Fork 10 branches, all must join."""
@@ -265,3 +285,23 @@ def test_fork_join_stress() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: All 10 forks joined successfully\n")
+
+
+def run_all() -> None:
+    """Run all Phase 3 tests."""
+    print("\n" + "=" * 60)
+    print("PHASE 3: Concurrency Race Condition Tests")
+    print("=" * 60 + "\n")
+
+    test_parallel_counter()
+    test_checkpoint_conflict()
+    test_fork_join_stress()
+    test_event_coordination()
+
+    print("=" * 60)
+    print("PHASE 3 COMPLETE: All tests executed!")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    run_all()
