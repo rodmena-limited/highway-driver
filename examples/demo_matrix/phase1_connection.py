@@ -43,3 +43,53 @@ def test_activity_near_timeout() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Activity near timeout completed successfully\n")
+
+def test_pool_stress() -> None:
+    """Test: 5 parallel branches without pool exhaustion."""
+    driver = Driver()
+
+    # 5 parallel branches (no mutual dependencies = run in parallel)
+    @driver.task(py=True)
+    def branch_0():
+        import time
+        time.sleep(0.5)
+        return {"branch": 0, "done": True}
+
+    @driver.task(py=True)
+    def branch_1():
+        import time
+        time.sleep(0.5)
+        return {"branch": 1, "done": True}
+
+    @driver.task(py=True)
+    def branch_2():
+        import time
+        time.sleep(0.5)
+        return {"branch": 2, "done": True}
+
+    @driver.task(py=True)
+    def branch_3():
+        import time
+        time.sleep(0.5)
+        return {"branch": 3, "done": True}
+
+    @driver.task(py=True)
+    def branch_4():
+        import time
+        time.sleep(0.5)
+        return {"branch": 4, "done": True}
+
+    # Wait for all 5 parallel branches
+    @driver.task(py=True, depends=["branch_0", "branch_1", "branch_2", "branch_3", "branch_4"])
+    def verify_pool():
+        return {"all_branches_complete": True, "completed_branches": 5}
+
+    print("=== Test: pool_stress ===")
+    print("Running 5 parallel branches to stress connection pool...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: 5 parallel branches completed without pool exhaustion\n")
