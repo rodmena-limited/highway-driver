@@ -1,0 +1,36 @@
+from highway import Driver
+
+def test_fail_twice_pass_third() -> None:
+    """Test: Fails 2x, passes on 3rd attempt."""
+    driver = Driver()
+
+    @driver.task(py=True, retries=3, retry_delay=1.0, backoff=1.0)
+    def retry_task():
+        import os
+        flag_file = "/tmp/matrix_retry_flag.txt"
+        attempt = 1
+        if os.path.exists(flag_file):
+            with open(flag_file, "r") as f:
+                attempt = int(f.read().strip()) + 1
+        os.makedirs(os.path.dirname(flag_file), exist_ok=True)
+        with open(flag_file, "w") as f:
+            f.write(str(attempt))
+        if attempt < 3:
+            raise RuntimeError("Simulated failure on attempt %d" % attempt)
+        return {"status": "success_on_attempt_3", "attempts": attempt}
+
+    # Cleanup before test
+    import os
+    flag_file = "/tmp/matrix_retry_flag.txt"
+    if os.path.exists(flag_file):
+        os.remove(flag_file)
+
+    print("=== Test: fail_twice_pass_third ===")
+    print("Running task that fails 2x then succeeds on 3rd attempt...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: Retry mechanism worked - succeeded on 3rd attempt\n")
