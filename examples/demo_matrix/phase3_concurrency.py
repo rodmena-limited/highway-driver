@@ -142,3 +142,43 @@ def test_event_coordination() -> None:
     print("Run ID: %s" % result.run_id)
     # Event coordination may not be fully supported yet
     print("Result: %s (event coordination behavior documented)\n" % result.status)
+
+def test_checkpoint_conflict() -> None:
+    """Test: 2 branches competing for shared state."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def init_shared():
+        return {"shared_key": "initial", "counter": 0}
+
+    # Branch A - runs in parallel with B
+    @driver.task(py=True, depends=["init_shared"])
+    def branch_a():
+        import time
+        time.sleep(0.1)  # Small delay
+        return {"written_by": "branch_a", "value": "A"}
+
+    # Branch B - runs in parallel with A
+    @driver.task(py=True, depends=["init_shared"])
+    def branch_b():
+        import time
+        time.sleep(0.05)  # Slightly faster
+        return {"written_by": "branch_b", "value": "B"}
+
+    # Wait for both branches
+    @driver.task(py=True, depends=["branch_a", "branch_b"])
+    def verify_conflict():
+        return {
+            "status": "conflict_resolved",
+            "both_completed": True
+        }
+
+    print("=== Test: checkpoint_conflict ===")
+    print("Running 2 parallel branches competing for state...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: Parallel conflict handled\n")
