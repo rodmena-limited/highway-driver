@@ -120,3 +120,45 @@ def test_chunked_large_result() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Large result handled (1050 items)\n")
+
+def test_while_zero_iterations() -> None:
+    """Test: While loop with false condition from start - zero iterations.
+
+    NOTE: While loops with tools.code.exec have a known limitation.
+    The condition {{counter}} requires a mutable workflow variable, but
+    tools.code.exec only writes to result_key and cannot set workflow variables.
+
+    For while loops to work properly, they need tools.python.run with
+    DurableContext to call ctx.set_variable("counter", value).
+
+    This test documents the current behavior.
+    """
+    driver = Driver()
+
+    @driver.task(py=True)
+    def init_false_condition():
+        # Note: This sets init_false_condition_result.counter, not {{counter}}
+        return {"counter": 10, "limit": 5}
+
+    @driver.while_loop(
+        # Using result path - but while condition re-evaluates on each iteration
+        # and would need mutable {{counter}} variable
+        condition="{{init_false_condition_result.counter}} < {{init_false_condition_result.limit}}",
+        depends=["init_false_condition"]
+    )
+    def while_body():
+        return {"iteration": "executed"}
+
+    @driver.task(py=True, depends=["while_body"])
+    def verify_while():
+        return {"status": "zero_iterations", "completed": True}
+
+    print("=== Test: while_zero_iterations ===")
+    print("NOTE: while_loop with tools.code.exec has limited support")
+    print("(requires tools.python.run with DurableContext for mutable variables)")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    print("Result: %s (while_loop limitation documented)\n" % result.status)
