@@ -53,3 +53,39 @@ def test_non_retryable_error() -> None:
     # Note: Highway may or may not distinguish ValueError from RuntimeError
     # The test passes if it either fails or completes (depending on retry classification)
     print("Result: %s (ValueError behavior documented)\n" % result.status)
+
+def test_simple_retry_success() -> None:
+    """Test: Simple retry that eventually succeeds."""
+    driver = Driver()
+
+    @driver.task(py=True, retries=2, retry_delay=1.0, backoff=2.0)
+    def flaky_task():
+        import random
+        import os
+        # Use file to track attempts since we can't use ctx
+        flag_file = "/tmp/matrix_flaky_flag.txt"
+        attempt = 1
+        if os.path.exists(flag_file):
+            with open(flag_file, "r") as f:
+                attempt = int(f.read().strip()) + 1
+        with open(flag_file, "w") as f:
+            f.write(str(attempt))
+        if attempt == 1:
+            raise RuntimeError("First attempt always fails")
+        return {"status": "recovered", "attempts": attempt}
+
+    # Cleanup before test
+    import os
+    flag_file = "/tmp/matrix_flaky_flag.txt"
+    if os.path.exists(flag_file):
+        os.remove(flag_file)
+
+    print("=== Test: simple_retry_success ===")
+    print("Running flaky task that fails first, succeeds second...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: Retry with backoff succeeded\n")
