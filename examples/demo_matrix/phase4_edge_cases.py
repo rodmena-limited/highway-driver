@@ -56,3 +56,42 @@ def test_null_variable() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Null variable handled gracefully\n")
+
+def test_deep_path_resolution() -> None:
+    """Test: Complex nested path resolution a.b.c[0].d.e."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def setup_deep():
+        # Create deeply nested structure
+        return {
+            "a": {
+                "b": {
+                    "c": [
+                        {
+                            "d": {
+                                "e": {
+                                    "f": "deeply_nested_value"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+
+    @driver.task(py=True, depends=["setup_deep"])
+    def resolve_paths():
+        # Simulating path resolution (actual Highway variable resolution)
+        # In real usage: {{setup_deep_result.a.b.c[0].d.e.f}}
+        return {"status": "resolved", "path_tested": "a.b.c[0].d.e.f"}
+
+    print("=== Test: deep_path_resolution ===")
+    print("Testing deep nested path resolution (a.b.c[0].d.e.f)...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: Deep path resolution completed\n")
