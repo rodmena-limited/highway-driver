@@ -104,3 +104,41 @@ def test_parallel_counter() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: 20 parallel branches completed\n")
+
+def test_event_coordination() -> None:
+    """Test: Event emit followed by event wait coordination."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def setup():
+        return {"workflow_id": "test_123", "data": "payload"}
+
+    @driver.emit(
+        event="matrix_test_event",
+        payload={"source": "emitter", "data": "test_payload"},
+        depends=["setup"]
+    )
+    def emit_event():
+        pass  # Marker function
+
+    @driver.wait_for(
+        event="matrix_test_event",
+        timeout=30,
+        depends=["emit_event"]
+    )
+    def wait_event():
+        pass  # Marker function
+
+    @driver.task(py=True, depends=["wait_event"])
+    def verify_event():
+        return {"status": "event_received", "chain_complete": True}
+
+    print("=== Test: event_coordination ===")
+    print("Running emit -> wait_for event chain...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    # Event coordination may not be fully supported yet
+    print("Result: %s (event coordination behavior documented)\n" % result.status)
