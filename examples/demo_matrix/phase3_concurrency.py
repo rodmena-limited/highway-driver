@@ -182,3 +182,86 @@ def test_checkpoint_conflict() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Parallel conflict handled\n")
+
+def test_fork_join_stress() -> None:
+    """Test: Fork 10 branches, all must join."""
+    driver = Driver()
+
+    # Fork 10 branches with varying execution times
+    @driver.task(py=True)
+    def fork_0():
+        import time
+        time.sleep(0.1)
+        return {"fork": 0, "completed": True}
+
+    @driver.task(py=True)
+    def fork_1():
+        import time
+        time.sleep(0.15)
+        return {"fork": 1, "completed": True}
+
+    @driver.task(py=True)
+    def fork_2():
+        import time
+        time.sleep(0.2)
+        return {"fork": 2, "completed": True}
+
+    @driver.task(py=True)
+    def fork_3():
+        import time
+        time.sleep(0.12)
+        return {"fork": 3, "completed": True}
+
+    @driver.task(py=True)
+    def fork_4():
+        import time
+        time.sleep(0.18)
+        return {"fork": 4, "completed": True}
+
+    @driver.task(py=True)
+    def fork_5():
+        import time
+        time.sleep(0.08)
+        return {"fork": 5, "completed": True}
+
+    @driver.task(py=True)
+    def fork_6():
+        import time
+        time.sleep(0.22)
+        return {"fork": 6, "completed": True}
+
+    @driver.task(py=True)
+    def fork_7():
+        import time
+        time.sleep(0.14)
+        return {"fork": 7, "completed": True}
+
+    @driver.task(py=True)
+    def fork_8():
+        import time
+        time.sleep(0.11)
+        return {"fork": 8, "completed": True}
+
+    @driver.task(py=True)
+    def fork_9():
+        import time
+        time.sleep(0.16)
+        return {"fork": 9, "completed": True}
+
+    # Join all forks
+    @driver.task(py=True, depends=[
+        "fork_0", "fork_1", "fork_2", "fork_3", "fork_4",
+        "fork_5", "fork_6", "fork_7", "fork_8", "fork_9"
+    ])
+    def verify_join():
+        return {"branches_completed": 10, "status": "all_joined"}
+
+    print("=== Test: fork_join_stress ===")
+    print("Forking 10 branches with varying execution times...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: All 10 forks joined successfully\n")
