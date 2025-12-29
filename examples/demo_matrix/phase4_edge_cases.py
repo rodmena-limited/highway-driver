@@ -1,4 +1,22 @@
+#!/usr/bin/env python3
+"""Phase 4: Edge Cases & Variable Resolution Tests.
+
+Port of demo_matrix/phase4_edge_cases.py to Highway Driver SDK.
+
+Tests:
+- empty_foreach: ForEach over empty list
+- null_variable: Access undefined variable
+- deep_path_resolution: Complex nested path resolution
+- chunked_large_result: 1050-item result (tests large payloads)
+- while_zero_iterations: While with false condition from start
+
+Run with:
+    export HIGHWAY_API_KEY="hw_k1_..."
+    python examples/demo_matrix/phase4_edge_cases.py
+"""
+
 from highway import Driver
+
 
 def test_empty_foreach() -> None:
     """Test: ForEach over an empty list - should complete with zero iterations."""
@@ -26,6 +44,7 @@ def test_empty_foreach() -> None:
     print("Run ID: %s" % result.run_id)
     # ForEach on empty list behavior may vary
     print("Result: %s (empty foreach behavior documented)\n" % result.status)
+
 
 def test_null_variable() -> None:
     """Test: Access undefined variable - should handle gracefully."""
@@ -56,6 +75,7 @@ def test_null_variable() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Null variable handled gracefully\n")
+
 
 def test_deep_path_resolution() -> None:
     """Test: Complex nested path resolution a.b.c[0].d.e."""
@@ -96,6 +116,7 @@ def test_deep_path_resolution() -> None:
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Deep path resolution completed\n")
 
+
 def test_chunked_large_result() -> None:
     """Test: Generate 1050 items - tests large result handling."""
     driver = Driver()
@@ -120,6 +141,7 @@ def test_chunked_large_result() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Large result handled (1050 items)\n")
+
 
 def test_while_zero_iterations() -> None:
     """Test: While loop with false condition from start - zero iterations.
@@ -163,6 +185,7 @@ def test_while_zero_iterations() -> None:
     print("Run ID: %s" % result.run_id)
     print("Result: %s (while_loop limitation documented)\n" % result.status)
 
+
 def test_simple_foreach() -> None:
     """Test: ForEach over small list - basic iteration test."""
     driver = Driver()
@@ -189,3 +212,25 @@ def test_simple_foreach() -> None:
     print("Run ID: %s" % result.run_id)
     # ForEach behavior documented
     print("Result: %s (foreach behavior documented)\n" % result.status)
+
+
+def run_all() -> None:
+    """Run all Phase 4 tests."""
+    print("\n" + "=" * 60)
+    print("PHASE 4: Edge Cases & Variable Resolution Tests")
+    print("=" * 60 + "\n")
+
+    test_null_variable()
+    test_deep_path_resolution()
+    test_chunked_large_result()
+    test_simple_foreach()
+    test_empty_foreach()
+    test_while_zero_iterations()
+
+    print("=" * 60)
+    print("PHASE 4 COMPLETE: All tests executed!")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    run_all()
