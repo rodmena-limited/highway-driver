@@ -111,3 +111,33 @@ def test_nested_parallel() -> None:
     print("Run ID: %s" % result.run_id)
     assert result.status == "completed", "Expected completed, got %s" % result.status
     print("PASSED: Nested parallel groups completed\n")
+
+def test_linear_chain() -> None:
+    """Test: Simple linear chain A → B → C → D."""
+    driver = Driver()
+
+    @driver.task(py=True)
+    def step_a():
+        return {"step": "A", "order": 1}
+
+    @driver.task(py=True, depends=["step_a"])
+    def step_b():
+        return {"step": "B", "order": 2}
+
+    @driver.task(py=True, depends=["step_b"])
+    def step_c():
+        return {"step": "C", "order": 3}
+
+    @driver.task(py=True, depends=["step_c"])
+    def step_d():
+        return {"step": "D", "order": 4, "chain_complete": True}
+
+    print("=== Test: linear_chain ===")
+    print("Running linear chain: A → B → C → D...")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print("PASSED: Linear chain executed in order\n")
