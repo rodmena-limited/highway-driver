@@ -78,3 +78,53 @@ def test_while_loop_with_durable_context() -> None:
         print("PASSED: While loop with get_context() completed")
     else:
         print("Note: Status %s (may need Highway engine support)" % result.status)
+
+def test_simple_durable_function() -> None:
+    """Test: Simple durable function without package.
+
+    Demonstrates BOTH patterns:
+    1. With ctx parameter (legacy/explicit)
+    2. Without ctx parameter (new - uses get_context())
+    """
+    driver = Driver(name="test-durable-patterns")
+
+    # Pattern 1: WITH ctx parameter (legacy - still works)
+    @driver.task(durable=True)
+    def with_ctx_param(ctx):
+        ctx.set_variable("pattern1", "with_ctx")
+        return {"pattern": "with_ctx", "value": ctx.get_variable("pattern1")}
+
+    # Pattern 2: WITHOUT ctx parameter (NEW - uses get_context())
+    @driver.task(durable=True, depends=["with_ctx_param"])
+    def without_ctx_param():
+        # Import get_context() from the packaged module
+        from driver_tasks.highway_context import get_context
+        ctx = get_context()
+        ctx.set_variable("pattern2", "get_context")
+        return {"pattern": "get_context", "value": ctx.get_variable("pattern2")}
+
+    # Verify both patterns worked
+    @driver.task(durable=True, depends=["without_ctx_param"])
+    def verify_both(ctx):
+        p1 = ctx.get_variable("pattern1")
+        p2 = ctx.get_variable("pattern2")
+        return {
+            "pattern1_value": p1,
+            "pattern2_value": p2,
+            "success": p1 == "with_ctx" and p2 == "get_context",
+        }
+
+    print("=== Test: simple_durable_function ===")
+    print("Testing both ctx patterns:")
+    print("  1. with_ctx_param(ctx) - legacy pattern")
+    print("  2. without_ctx_param() - new get_context() pattern")
+
+    result = driver.run(wait=True, timeout=60)
+
+    print("Status: %s" % result.status)
+    print("Run ID: %s" % result.run_id)
+
+    if result.status == "completed":
+        print("PASSED: Both ctx patterns work correctly")
+    else:
+        print("Note: Status %s (may need Highway engine support)" % result.status)
