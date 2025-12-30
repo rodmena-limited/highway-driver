@@ -9,3 +9,15 @@ class Calculator:
             precision: Decimal precision for results
         """
         self.precision = precision
+
+    def add(self, a: int | float, b: int | float) -> int | float:
+        """Add two numbers.
+
+        Args:
+            a: First number
+            b: Second number
+
+        Returns:
+            Sum of a and b
+        """
+        return round(a + b, self.precision)
