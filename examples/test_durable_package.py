@@ -1,7 +1,27 @@
+#!/usr/bin/env python3
+"""Acceptance test for tools.python.run with package support.
+
+This test validates that the highway-driver can:
+1. Package a Python package with multiple modules
+2. Upload the artifact to Highway
+3. Execute functions with DurableContext
+4. Handle cross-module imports correctly
+
+Run with:
+    export HIGHWAY_API_KEY="hw_k1_..."
+    python examples/test_durable_package.py
+"""
+
 from __future__ import annotations
+
 import os
 import sys
+
+# Add examples to path for test_package import
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from highway import Driver
+
 
 def test_package_with_cross_imports() -> None:
     """Test: Package with cross-module imports."""
@@ -32,6 +52,7 @@ def test_package_with_cross_imports() -> None:
         print("PASSED: Package executed successfully")
     else:
         print("Note: Status %s (may need Highway engine support)" % result.status)
+
 
 def test_while_loop_with_durable_context() -> None:
     """Test: While loop with mutable counter via DurableContext.
@@ -78,6 +99,7 @@ def test_while_loop_with_durable_context() -> None:
         print("PASSED: While loop with get_context() completed")
     else:
         print("Note: Status %s (may need Highway engine support)" % result.status)
+
 
 def test_simple_durable_function() -> None:
     """Test: Simple durable function without package.
@@ -128,3 +150,24 @@ def test_simple_durable_function() -> None:
         print("PASSED: Both ctx patterns work correctly")
     else:
         print("Note: Status %s (may need Highway engine support)" % result.status)
+
+
+def run_all() -> None:
+    """Run all acceptance tests."""
+    print("\n" + "=" * 60)
+    print("ACCEPTANCE TESTS: tools.python.run Support")
+    print("=" * 60 + "\n")
+
+    test_simple_durable_function()
+    print()
+    test_while_loop_with_durable_context()
+    print()
+    test_package_with_cross_imports()
+
+    print("\n" + "=" * 60)
+    print("ACCEPTANCE TESTS COMPLETE")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    run_all()
