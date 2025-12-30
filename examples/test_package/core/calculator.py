@@ -21,3 +21,15 @@ class Calculator:
             Sum of a and b
         """
         return round(a + b, self.precision)
+
+    def multiply(self, a: int | float, b: int | float) -> int | float:
+        """Multiply two numbers.
+
+        Args:
+            a: First number
+            b: Second number
+
+        Returns:
+            Product of a and b
+        """
+        return round(a * b, self.precision)
