@@ -44,3 +44,23 @@ class HighwayClient:
         )
         response.raise_for_status()
         return response.json()["data"]
+
+    def status(self, workflow_run_id: str) -> dict:
+        """Get workflow status."""
+        response = self.session.get(
+            "%s/api/v1/workflows/%s" % (self.api_endpoint, workflow_run_id),
+            headers=self.headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()["data"]
+
+    def cancel(self, workflow_run_id: str) -> dict:
+        """Cancel running workflow."""
+        response = self.session.post(
+            "%s/api/v1/workflows/%s/cancel" % (self.api_endpoint, workflow_run_id),
+            headers=self.headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()["data"]
