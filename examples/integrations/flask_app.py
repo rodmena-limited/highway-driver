@@ -13,6 +13,53 @@ executor = ThreadPoolExecutor(max_workers=10)
 app = Flask(__name__)
 highway_client = HighwayClient(HIGHWAY_API_ENDPOINT, HIGHWAY_API_KEY)
 
+def submit_workflow():
+    """Submit a workflow for execution (non-blocking)."""
+    data = request.get_json()
+
+    if not data or "workflow_definition" not in data:
+        return jsonify({"error": "Missing workflow_definition"}), 400
+
+    try:
+        result = highway_client.submit(
+            data["workflow_definition"],
+            data.get("inputs", {}),
+        )
+        return (
+            jsonify(
+                {
+                    "workflow_run_id": result["workflow_run_id"],
+                    "run_id": result["run_id"],
+                    "status": "submitted",
+                }
+            ),
+            201,
+        )
+    except requests.HTTPError as e:
+        return jsonify({"error": str(e)}), e.response.status_code
+    except Exception as e:
+        logger.exception("Error submitting workflow")
+        return jsonify({"error": str(e)}), 500
+
+def get_status(workflow_run_id: str):
+    """Get current workflow status."""
+    try:
+        result = highway_client.status(workflow_run_id)
+        return jsonify(
+            {
+                "workflow_run_id": result.get("workflow_run_id", workflow_run_id),
+                "status": result.get("status", "unknown"),
+                "progress_percentage": result.get("progress_percentage", 0),
+                "current_step": result.get("current_step"),
+                "result": result.get("result"),
+                "error": result.get("error"),
+            }
+        )
+    except requests.HTTPError as e:
+        if e.response.status_code == 404:
+            return jsonify({"error": "Workflow not found"}), 404
+        return jsonify({"error": str(e)}), e.response.status_code
+
 class HighwayClient:
     """Sync HTTP client for Highway API (thread-safe)."""
     def __init__(self, api_endpoint: str, api_key: str):
