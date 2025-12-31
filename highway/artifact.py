@@ -335,6 +335,100 @@ def _rewrite_imports(
 
     return ast.unparse(new_tree)
 
+def package_directory(
+    source_dir: str,
+    entrypoint: str,
+    package_name: str | None = None,
+) -> PackagedArtifact:
+    """Package entire Python package directory into ZIP artifact.
+
+    Args:
+        source_dir: Path to package directory
+        entrypoint: Module:function path (e.g., "main:run_calculation")
+        package_name: Name for root package in ZIP (default: use directory name)
+
+    Returns:
+        PackagedArtifact with file path and metadata
+
+    ZIP Structure (for issuedb/):
+        issuedb/
+        ├── __init__.py
+        ├── cli.py
+        └── ...
+
+    Package is zipped as-is with no import rewriting.
+    """
+    source_dir = os.path.abspath(source_dir)
+
+    if not os.path.isdir(source_dir):
+        raise ValueError("Source directory does not exist: %s" % source_dir)
+
+    # Use original package name by default (no renaming)
+    original_package_name = os.path.basename(source_dir.rstrip("/"))
+    if package_name is None:
+        package_name = original_package_name
+
+    # Create temp file for ZIP
+    fd, zip_path = tempfile.mkstemp(suffix=".zip", prefix="driver_tasks_")
+    os.close(fd)
+
+    hasher = hashlib.sha256()
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Walk source directory and add all .py files
+        for root, dirs, files in os.walk(source_dir):
+            # Filter out __pycache__ and hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith((".", "__pycache__"))]
+
+            for filename in files:
+                if not filename.endswith(".py"):
+                    continue
+
+                file_path = os.path.join(root, filename)
+                rel_path = os.path.relpath(file_path, source_dir)
+
+                # Create archive path under package_name
+                archive_path = os.path.join(package_name, rel_path)
+
+                # Read content
+                with open(file_path, "rb") as f:
+                    content = f.read()
+
+                # Rewrite imports if package name differs
+                if original_package_name != package_name:
+                    content = _rewrite_imports(
+                        content.decode("utf-8"),
+                        original_package_name,
+                        package_name,
+                    ).encode("utf-8")
+
+                hasher.update(content)
+                zf.writestr(archive_path, content)
+
+        # Ensure __init__.py exists at package root
+        root_init = os.path.join(package_name, "__init__.py")
+        if root_init not in zf.namelist():
+            init_content = b'"""Auto-generated package init."""\n'
+            zf.writestr(root_init, init_content)
+            hasher.update(init_content)
+
+        # Add highway_context.py for get_context() support
+        context_path = os.path.join(package_name, "highway_context.py")
+        if context_path not in zf.namelist():
+            context_content = _get_highway_context_module().encode("utf-8")
+            zf.writestr(context_path, context_content)
+            hasher.update(context_content)
+            logger.debug("Added highway_context.py to package artifact")
+
+    content_hash = hasher.hexdigest()
+
+    return PackagedArtifact(
+        file_path=zip_path,
+        content_hash=content_hash,
+        package_name=package_name,
+        entrypoint=entrypoint,
+    )
+
 @dataclass
 class PackagedArtifact:
     """Result of packaging Python code into a ZIP artifact."""
