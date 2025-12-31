@@ -280,6 +280,61 @@ def package_functions(
         entrypoint="tasks:_hw_%s" % first_func,  # Wrapper function
     )
 
+def _rewrite_imports(
+    source: str,
+    old_package: str,
+    new_package: str,
+) -> str:
+    """Rewrite imports from old_package to new_package.
+
+    Handles:
+        from old_package.sub import foo  ->  from new_package.sub import foo
+        import old_package.sub           ->  import new_package.sub
+        from old_package import sub      ->  from new_package import sub
+
+    Args:
+        source: Python source code
+        old_package: Original package name (e.g., "test_package")
+        new_package: New package name (e.g., "driver_tasks")
+
+    Returns:
+        Source code with rewritten imports
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # If we can't parse, fall back to simple string replacement
+        return source.replace(old_package + ".", new_package + ".")
+
+    class ImportRewriter(ast.NodeTransformer):
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom:
+            if node.module and node.module.startswith(old_package):
+                # from old_package.xxx import yyy
+                if node.module == old_package:
+                    node.module = new_package
+                else:
+                    # old_package.submodule -> new_package.submodule
+                    suffix = node.module[len(old_package):]
+                    node.module = new_package + suffix
+            return node
+
+        def visit_Import(self, node: ast.Import) -> ast.Import:
+            for alias in node.names:
+                if alias.name.startswith(old_package):
+                    # import old_package.xxx
+                    if alias.name == old_package:
+                        alias.name = new_package
+                    else:
+                        suffix = alias.name[len(old_package):]
+                        alias.name = new_package + suffix
+            return node
+
+    rewriter = ImportRewriter()
+    new_tree = rewriter.visit(tree)
+    ast.fix_missing_locations(new_tree)
+
+    return ast.unparse(new_tree)
+
 @dataclass
 class PackagedArtifact:
     """Result of packaging Python code into a ZIP artifact."""
