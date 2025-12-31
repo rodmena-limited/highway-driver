@@ -64,3 +64,31 @@ class HighwayClient:
         )
         response.raise_for_status()
         return response.json()["data"]
+
+    def wait_for_completion(
+        self, workflow_run_id: str, timeout: float = 300.0, poll_interval: float = 2.0
+    ) -> dict:
+        """Wait for workflow completion (blocking)."""
+        start = time.time()
+        while time.time() - start < timeout:
+            status = self.status(workflow_run_id)
+            if status.get("status") in ("completed", "failed", "cancelled"):
+                return status
+            time.sleep(poll_interval)
+        raise TimeoutError(
+            "Workflow %s did not complete within %ss" % (workflow_run_id, timeout)
+        )
+
+    def stream_events(self, workflow_run_id: str) -> Generator[dict, None, None]:
+        """Stream workflow events via SSE."""
+        response = self.session.get(
+            "%s/api/v1/workflows/%s/stream" % (self.api_endpoint, workflow_run_id),
+            headers={**self.headers, "Accept": "text/event-stream"},
+            stream=True,
+            timeout=None,
+        )
+        response.raise_for_status()
+
+        for line in response.iter_lines(decode_unicode=True):
+            if line and line.startswith("data: "):
+                yield json.loads(line[6:])
