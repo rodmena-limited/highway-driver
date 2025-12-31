@@ -60,6 +60,39 @@ def get_status(workflow_run_id: str):
             return jsonify({"error": "Workflow not found"}), 404
         return jsonify({"error": str(e)}), e.response.status_code
 
+def cancel_workflow(workflow_run_id: str):
+    """Cancel a running workflow."""
+    try:
+        highway_client.cancel(workflow_run_id)
+        return jsonify({"status": "cancelled", "workflow_run_id": workflow_run_id})
+    except requests.HTTPError as e:
+        return jsonify({"error": str(e)}), e.response.status_code
+
+def stream_status(workflow_run_id: str):
+    """Real-time workflow updates via Server-Sent Events."""
+
+    def generate() -> Generator[str, None, None]:
+        try:
+            for event in highway_client.stream_events(workflow_run_id):
+                yield "data: %s\n\n" % json.dumps(event)
+
+                if event.get("status") in ("completed", "failed", "cancelled"):
+                    break
+        except requests.HTTPError as e:
+            yield "data: %s\n\n" % json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("SSE stream error")
+            yield "data: %s\n\n" % json.dumps({"error": str(e)})
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 class HighwayClient:
     """Sync HTTP client for Highway API (thread-safe)."""
     def __init__(self, api_endpoint: str, api_key: str):
