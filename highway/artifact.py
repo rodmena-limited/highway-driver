@@ -45,6 +45,64 @@ def _generate_wrapper(func_name: str) -> str:
 
     return wrapper
 
+def _get_highway_context_module() -> str:
+    """Return content for highway_context.py module.
+
+    This module provides thread-local context access for user code
+    that doesn't accept ctx as a parameter.
+
+    Returns:
+        Python source code for highway_context.py
+    """
+    return '''"""Highway context helper for accessing DurableContext.
+
+This module provides get_context() for accessing the current
+DurableContext from within a Highway task, without requiring
+ctx as a function parameter.
+
+Usage:
+    from highway_context import get_context
+
+    def my_existing_function(order_id):
+        # Existing code - no ctx parameter needed
+        ctx = get_context()
+        ctx.set_variable("processed", True)
+        return {"order_id": order_id}
+"""
+
+import threading
+
+_thread_local = threading.local()
+
+
+def get_context():
+    """Get current DurableContext from within a Highway task.
+
+    Returns:
+        DurableContext: The current execution context
+
+    Raises:
+        RuntimeError: If called outside a Highway task execution
+    """
+    ctx = getattr(_thread_local, 'ctx', None)
+    if ctx is None:
+        raise RuntimeError(
+            "get_context() called outside Highway task execution. "
+            "This function can only be used within a durable task."
+        )
+    return ctx
+
+
+def _set_context(ctx):
+    """Set the thread-local context (called by wrapper)."""
+    _thread_local.ctx = ctx
+
+
+def _clear_context():
+    """Clear the thread-local context (called by wrapper)."""
+    _thread_local.ctx = None
+'''
+
 @dataclass
 class PackagedArtifact:
     """Result of packaging Python code into a ZIP artifact."""
