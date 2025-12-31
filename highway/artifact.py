@@ -103,6 +103,44 @@ def _clear_context():
     _thread_local.ctx = None
 '''
 
+def _strip_decorators(source: str, func_name: str) -> str:
+    """Strip @driver decorators from function source.
+
+    Uses AST to safely remove decorator lines while preserving
+    the original function signature unchanged.
+
+    NOTE: We do NOT inject ctx here. The wrapper function handles ctx.
+    This allows existing packages to work without modification.
+
+    Args:
+        source: Original function source code
+        func_name: Name of the function (for error messages)
+
+    Returns:
+        Cleaned source code without decorators (signature unchanged)
+    """
+    # Dedent source to handle indented functions
+    source = textwrap.dedent(source)
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        raise ValueError("Cannot parse source for '%s': %s" % (func_name, e))
+
+    if not tree.body:
+        raise ValueError("Empty source for function '%s'" % func_name)
+
+    node = tree.body[0]
+
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        raise ValueError("Expected function definition for '%s'" % func_name)
+
+    # Remove all decorators - signature stays unchanged
+    node.decorator_list = []
+
+    # Generate clean source
+    return ast.unparse(node)
+
 @dataclass
 class PackagedArtifact:
     """Result of packaging Python code into a ZIP artifact."""
