@@ -10,3 +10,11 @@ import zipfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 logger = logging.getLogger(__name__)
+
+@dataclass
+class PackagedArtifact:
+    """Result of packaging Python code into a ZIP artifact."""
+    file_path: str
+    content_hash: str
+    package_name: str
+    entrypoint: str
