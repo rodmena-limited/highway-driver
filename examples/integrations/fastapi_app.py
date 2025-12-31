@@ -62,3 +62,37 @@ class HighwayClient:
             )
             response.raise_for_status()
             return response.json()["data"]
+
+    async def status(self, workflow_run_id: str) -> dict:
+        """Get workflow status."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                "%s/api/v1/workflows/%s" % (self.api_endpoint, workflow_run_id),
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+
+    async def cancel(self, workflow_run_id: str) -> dict:
+        """Cancel running workflow."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "%s/api/v1/workflows/%s/cancel" % (self.api_endpoint, workflow_run_id),
+                headers=self.headers,
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+
+    async def wait_for_completion(
+        self, workflow_run_id: str, timeout: float = 300.0, poll_interval: float = 2.0
+    ) -> dict:
+        """Wait for workflow completion (blocking)."""
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout:
+            status = await self.status(workflow_run_id)
+            if status.get("status") in ("completed", "failed", "cancelled"):
+                return status
+            await asyncio.sleep(poll_interval)
+        raise TimeoutError(
+            "Workflow %s did not complete within %ss" % (workflow_run_id, timeout)
+        )
