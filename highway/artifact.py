@@ -141,6 +141,70 @@ def _strip_decorators(source: str, func_name: str) -> str:
     # Generate clean source
     return ast.unparse(node)
 
+def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
+    """Generate tasks.py module content with original functions and wrappers.
+
+    For each user function, generates:
+    1. The original function (decorators stripped, signature unchanged)
+    2. A wrapper function (_hw_<name>) that handles ctx injection
+
+    The wrapper:
+    - Always accepts ctx as first param (engine requirement)
+    - Inspects original function signature at runtime
+    - If original wants ctx: passes it through
+    - If original doesn't want ctx: sets thread-local context for get_context()
+
+    Args:
+        functions: Dict mapping function name to callable
+
+    Returns:
+        Python source code for tasks.py module
+    """
+    lines = [
+        '"""Auto-generated tasks module from highway-driver.',
+        '',
+        'Contains original functions and wrapper functions (_hw_*).',
+        'Engine calls wrappers; wrappers handle ctx injection.',
+        '"""',
+        '',
+        'from __future__ import annotations',
+        '',
+        'import inspect as _inspect',
+        'from typing import TYPE_CHECKING, Any',
+        '',
+        '# Import context helper from same package',
+        'from . import highway_context as _hc',
+        '',
+        'if TYPE_CHECKING:',
+        '    from highway_engine.durable_context import DurableContext',
+        '',
+        '',
+    ]
+
+    for func_name, func in functions.items():
+        try:
+            source = inspect.getsource(func)
+            # Strip decorators only - DO NOT inject ctx
+            cleaned_source = _strip_decorators(source, func_name)
+            lines.append(cleaned_source)
+            lines.append('')
+            lines.append('')
+
+            # Generate wrapper function
+            wrapper_source = _generate_wrapper(func_name)
+            lines.append(wrapper_source)
+            lines.append('')
+            lines.append('')
+
+            logger.debug("Generated wrapper _hw_%s for function %s", func_name, func_name)
+
+        except (OSError, TypeError) as e:
+            raise ValueError(
+                "Cannot extract source for function '%s': %s" % (func_name, e)
+            )
+
+    return '\n'.join(lines)
+
 @dataclass
 class PackagedArtifact:
     """Result of packaging Python code into a ZIP artifact."""
