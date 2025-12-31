@@ -205,6 +205,81 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
 
     return '\n'.join(lines)
 
+def package_functions(
+    functions: dict[str, Callable[..., Any]],
+    package_name: str = "driver_tasks",
+) -> PackagedArtifact:
+    """Package individual functions into ZIP artifact.
+
+    For decorated functions without package= parameter:
+    1. Extract function source via inspect.getsource()
+    2. Strip @driver decorators via AST
+    3. Generate wrapper functions that handle ctx injection
+    4. Include highway_context.py for get_context() access
+    5. Write to ZIP in mktemp
+
+    Args:
+        functions: Dict mapping function name to callable
+        package_name: Name for root package in ZIP
+
+    Returns:
+        PackagedArtifact with file path and metadata
+
+    ZIP Structure:
+        driver_tasks/
+        ├── __init__.py
+        ├── highway_context.py  # Context helper for get_context()
+        └── tasks.py            # Original functions + wrappers
+    """
+    if not functions:
+        raise ValueError("No functions provided for packaging")
+
+    logger.info("Packaging %d functions into artifact", len(functions))
+
+    # Generate tasks.py content with wrappers
+    tasks_content = _generate_tasks_module(functions)
+
+    # Get highway_context.py content
+    context_content = _get_highway_context_module()
+
+    # Create temp file for ZIP
+    fd, zip_path = tempfile.mkstemp(suffix=".zip", prefix="driver_tasks_")
+    os.close(fd)
+
+    hasher = hashlib.sha256()
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Add __init__.py
+        init_content = '"""Auto-generated package init."""\n'
+        init_bytes = init_content.encode("utf-8")
+        zf.writestr(os.path.join(package_name, "__init__.py"), init_bytes)
+        hasher.update(init_bytes)
+
+        # Add highway_context.py for get_context() access
+        context_bytes = context_content.encode("utf-8")
+        zf.writestr(os.path.join(package_name, "highway_context.py"), context_bytes)
+        hasher.update(context_bytes)
+        logger.debug("Added highway_context.py to artifact")
+
+        # Add tasks.py with all functions and wrappers
+        tasks_bytes = tasks_content.encode("utf-8")
+        zf.writestr(os.path.join(package_name, "tasks.py"), tasks_bytes)
+        hasher.update(tasks_bytes)
+
+    content_hash = hasher.hexdigest()
+
+    # Entrypoint uses wrapper function (_hw_<func_name>)
+    first_func = next(iter(functions.keys()))
+
+    logger.info("Created artifact: %s (hash=%s)", zip_path, content_hash[:16])
+
+    return PackagedArtifact(
+        file_path=zip_path,
+        content_hash=content_hash,
+        package_name=package_name,
+        entrypoint="tasks:_hw_%s" % first_func,  # Wrapper function
+    )
+
 @dataclass
 class PackagedArtifact:
     """Result of packaging Python code into a ZIP artifact."""
