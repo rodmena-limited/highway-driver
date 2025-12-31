@@ -17,6 +17,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+async def monitor_workflow_background(workflow_run_id: str, callback_url: str):
+    """Background task to monitor workflow and call webhook on completion."""
+    client = HighwayClient(HIGHWAY_API_ENDPOINT, HIGHWAY_API_KEY)
+    try:
+        result = await client.wait_for_completion(workflow_run_id, timeout=3600)
+        async with httpx.AsyncClient() as http:
+            await http.post(callback_url, json=result, timeout=30)
+        logger.info("Callback sent for %s", workflow_run_id)
+    except Exception:
+        logger.exception("Background monitor failed for %s", workflow_run_id)
+
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "highway_endpoint": HIGHWAY_API_ENDPOINT}
+
 class WorkflowSubmitRequest(BaseModel):
     """Request to submit a workflow."""
     workflow_definition: dict[str, Any]
@@ -96,3 +111,16 @@ class HighwayClient:
         raise TimeoutError(
             "Workflow %s did not complete within %ss" % (workflow_run_id, timeout)
         )
+
+    async def stream_events(self, workflow_run_id: str):
+        """Stream workflow events via SSE."""
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "GET",
+                "%s/api/v1/workflows/%s/stream" % (self.api_endpoint, workflow_run_id),
+                headers={**self.headers, "Accept": "text/event-stream"},
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line and line.startswith("data: "):
+                        yield json.loads(line[6:])
