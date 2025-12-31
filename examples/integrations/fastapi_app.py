@@ -32,6 +32,48 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "highway_endpoint": HIGHWAY_API_ENDPOINT}
 
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle."""
+    app.state.highway = HighwayClient(HIGHWAY_API_ENDPOINT, HIGHWAY_API_KEY)
+    logger.info("Highway client initialized: %s", HIGHWAY_API_ENDPOINT)
+    yield
+    logger.info("Shutting down")
+
+async def submit_workflow(request: WorkflowSubmitRequest):
+    """Submit a workflow for execution (non-blocking)."""
+    try:
+        result = await app.state.highway.submit(
+            request.workflow_definition,
+            request.inputs,
+        )
+        return WorkflowSubmitResponse(
+            workflow_run_id=result["workflow_run_id"],
+            run_id=result["run_id"],
+            status="submitted",
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        logger.exception("Error submitting workflow")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_status(workflow_run_id: str):
+    """Get current workflow status."""
+    try:
+        result = await app.state.highway.status(workflow_run_id)
+        return WorkflowStatusResponse(
+            workflow_run_id=result.get("workflow_run_id", workflow_run_id),
+            status=result.get("status", "unknown"),
+            progress_percentage=result.get("progress_percentage", 0),
+            current_step=result.get("current_step"),
+            result=result.get("result"),
+            error=result.get("error"),
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+
 class WorkflowSubmitRequest(BaseModel):
     """Request to submit a workflow."""
     workflow_definition: dict[str, Any]
