@@ -1,0 +1,13 @@
+# FastAPI dependencies
+fastapi>=0.100.0
+uvicorn>=0.23.0
+httpx>=0.24.0
+websockets>=11.0
+
+# Flask dependencies
+flask>=3.0.0
+requests>=2.31.0
+gunicorn>=21.0.0
+
+# Highway driver
+highway>=0.9.0
