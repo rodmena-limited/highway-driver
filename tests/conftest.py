@@ -14,3 +14,7 @@ def pytest_configure(config):
 def api_key():
     """Return API key if available, None otherwise."""
     return os.environ.get("HIGHWAY_API_KEY")
+
+def api_endpoint():
+    """Return API endpoint (defaults to local dev)."""
+    return os.environ.get("HIGHWAY_API_ENDPOINT", "http://localhost:7822")
