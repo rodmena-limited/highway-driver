@@ -10,3 +10,7 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "unit: marks tests as unit tests (no API required)"
     )
+
+def api_key():
+    """Return API key if available, None otherwise."""
+    return os.environ.get("HIGHWAY_API_KEY")
