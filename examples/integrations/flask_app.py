@@ -1,100 +1,49 @@
+#!/usr/bin/env python3
+"""Flask integration with Highway Workflow Engine.
+
+This example demonstrates:
+- Sync HTTP client for Highway API (thread-safe)
+- Server-Sent Events (SSE) for real-time status
+- Background thread monitoring
+- Proper error handling
+
+Run:
+    pip install -r requirements.txt
+    flask run --port 8000
+    # Or for production:
+    gunicorn -w 4 flask_app:app
+
+Endpoints:
+    POST /submit           - Submit a workflow
+    GET  /status/<id>      - Get workflow status
+    POST /cancel/<id>      - Cancel workflow
+    GET  /stream/<id>      - SSE for real-time updates
+"""
+
 import json
 import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Generator
+
 import requests
 from flask import Flask, Response, jsonify, request
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Configuration
 HIGHWAY_API_ENDPOINT = os.environ.get("HIGHWAY_API_ENDPOINT", "http://localhost:7822")
 HIGHWAY_API_KEY = os.environ.get("HIGHWAY_API_KEY", "")
+
+# Thread pool for background tasks
 executor = ThreadPoolExecutor(max_workers=10)
-app = Flask(__name__)
-highway_client = HighwayClient(HIGHWAY_API_ENDPOINT, HIGHWAY_API_KEY)
 
-def submit_workflow():
-    """Submit a workflow for execution (non-blocking)."""
-    data = request.get_json()
-
-    if not data or "workflow_definition" not in data:
-        return jsonify({"error": "Missing workflow_definition"}), 400
-
-    try:
-        result = highway_client.submit(
-            data["workflow_definition"],
-            data.get("inputs", {}),
-        )
-        return (
-            jsonify(
-                {
-                    "workflow_run_id": result["workflow_run_id"],
-                    "run_id": result["run_id"],
-                    "status": "submitted",
-                }
-            ),
-            201,
-        )
-    except requests.HTTPError as e:
-        return jsonify({"error": str(e)}), e.response.status_code
-    except Exception as e:
-        logger.exception("Error submitting workflow")
-        return jsonify({"error": str(e)}), 500
-
-def get_status(workflow_run_id: str):
-    """Get current workflow status."""
-    try:
-        result = highway_client.status(workflow_run_id)
-        return jsonify(
-            {
-                "workflow_run_id": result.get("workflow_run_id", workflow_run_id),
-                "status": result.get("status", "unknown"),
-                "progress_percentage": result.get("progress_percentage", 0),
-                "current_step": result.get("current_step"),
-                "result": result.get("result"),
-                "error": result.get("error"),
-            }
-        )
-    except requests.HTTPError as e:
-        if e.response.status_code == 404:
-            return jsonify({"error": "Workflow not found"}), 404
-        return jsonify({"error": str(e)}), e.response.status_code
-
-def cancel_workflow(workflow_run_id: str):
-    """Cancel a running workflow."""
-    try:
-        highway_client.cancel(workflow_run_id)
-        return jsonify({"status": "cancelled", "workflow_run_id": workflow_run_id})
-    except requests.HTTPError as e:
-        return jsonify({"error": str(e)}), e.response.status_code
-
-def stream_status(workflow_run_id: str):
-    """Real-time workflow updates via Server-Sent Events."""
-
-    def generate() -> Generator[str, None, None]:
-        try:
-            for event in highway_client.stream_events(workflow_run_id):
-                yield "data: %s\n\n" % json.dumps(event)
-
-                if event.get("status") in ("completed", "failed", "cancelled"):
-                    break
-        except requests.HTTPError as e:
-            yield "data: %s\n\n" % json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("SSE stream error")
-            yield "data: %s\n\n" % json.dumps({"error": str(e)})
-
-    return Response(
-        generate(),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 class HighwayClient:
     """Sync HTTP client for Highway API (thread-safe)."""
+
     def __init__(self, api_endpoint: str, api_key: str):
         self.api_endpoint = api_endpoint.rstrip("/")
         self.headers = {
@@ -172,3 +121,157 @@ class HighwayClient:
         for line in response.iter_lines(decode_unicode=True):
             if line and line.startswith("data: "):
                 yield json.loads(line[6:])
+
+
+# Application
+app = Flask(__name__)
+highway_client = HighwayClient(HIGHWAY_API_ENDPOINT, HIGHWAY_API_KEY)
+
+
+@app.route("/submit", methods=["POST"])
+def submit_workflow():
+    """Submit a workflow for execution (non-blocking)."""
+    data = request.get_json()
+
+    if not data or "workflow_definition" not in data:
+        return jsonify({"error": "Missing workflow_definition"}), 400
+
+    try:
+        result = highway_client.submit(
+            data["workflow_definition"],
+            data.get("inputs", {}),
+        )
+        return (
+            jsonify(
+                {
+                    "workflow_run_id": result["workflow_run_id"],
+                    "run_id": result["run_id"],
+                    "status": "submitted",
+                }
+            ),
+            201,
+        )
+    except requests.HTTPError as e:
+        return jsonify({"error": str(e)}), e.response.status_code
+    except Exception as e:
+        logger.exception("Error submitting workflow")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/status/<workflow_run_id>", methods=["GET"])
+def get_status(workflow_run_id: str):
+    """Get current workflow status."""
+    try:
+        result = highway_client.status(workflow_run_id)
+        return jsonify(
+            {
+                "workflow_run_id": result.get("workflow_run_id", workflow_run_id),
+                "status": result.get("status", "unknown"),
+                "progress_percentage": result.get("progress_percentage", 0),
+                "current_step": result.get("current_step"),
+                "result": result.get("result"),
+                "error": result.get("error"),
+            }
+        )
+    except requests.HTTPError as e:
+        if e.response.status_code == 404:
+            return jsonify({"error": "Workflow not found"}), 404
+        return jsonify({"error": str(e)}), e.response.status_code
+
+
+@app.route("/cancel/<workflow_run_id>", methods=["POST"])
+def cancel_workflow(workflow_run_id: str):
+    """Cancel a running workflow."""
+    try:
+        highway_client.cancel(workflow_run_id)
+        return jsonify({"status": "cancelled", "workflow_run_id": workflow_run_id})
+    except requests.HTTPError as e:
+        return jsonify({"error": str(e)}), e.response.status_code
+
+
+@app.route("/stream/<workflow_run_id>")
+def stream_status(workflow_run_id: str):
+    """Real-time workflow updates via Server-Sent Events."""
+
+    def generate() -> Generator[str, None, None]:
+        try:
+            for event in highway_client.stream_events(workflow_run_id):
+                yield "data: %s\n\n" % json.dumps(event)
+
+                if event.get("status") in ("completed", "failed", "cancelled"):
+                    break
+        except requests.HTTPError as e:
+            yield "data: %s\n\n" % json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("SSE stream error")
+            yield "data: %s\n\n" % json.dumps({"error": str(e)})
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def monitor_workflow_background(workflow_run_id: str, callback_url: str):
+    """Background thread to monitor workflow and call webhook on completion."""
+    try:
+        result = highway_client.wait_for_completion(workflow_run_id, timeout=3600)
+        requests.post(callback_url, json=result, timeout=30)
+        logger.info("Callback sent for %s", workflow_run_id)
+    except Exception:
+        logger.exception("Background monitor failed for %s", workflow_run_id)
+
+
+@app.route("/submit-with-callback", methods=["POST"])
+def submit_with_callback():
+    """Submit workflow and trigger callback on completion."""
+    data = request.get_json()
+
+    if not data or "workflow_definition" not in data:
+        return jsonify({"error": "Missing workflow_definition"}), 400
+    if "callback_url" not in data:
+        return jsonify({"error": "Missing callback_url"}), 400
+
+    try:
+        result = highway_client.submit(
+            data["workflow_definition"],
+            data.get("inputs", {}),
+        )
+
+        # Submit to thread pool
+        executor.submit(
+            monitor_workflow_background,
+            result["workflow_run_id"],
+            data["callback_url"],
+        )
+
+        return (
+            jsonify(
+                {
+                    "workflow_run_id": result["workflow_run_id"],
+                    "run_id": result["run_id"],
+                    "status": "submitted",
+                    "callback_url": data["callback_url"],
+                }
+            ),
+            201,
+        )
+    except requests.HTTPError as e:
+        return jsonify({"error": str(e)}), e.response.status_code
+    except Exception as e:
+        logger.exception("Error submitting workflow")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/health")
+def health_check():
+    """Health check endpoint."""
+    return jsonify({"status": "healthy", "highway_endpoint": HIGHWAY_API_ENDPOINT})
+
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8000)
