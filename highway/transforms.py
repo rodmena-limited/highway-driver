@@ -26,10 +26,9 @@ Example:
 from __future__ import annotations
 
 import ast
-import hashlib
 import inspect
 import textwrap
-from typing import Callable
+from collections.abc import Callable
 
 
 class DurableSleepTransformer(ast.NodeTransformer):
@@ -186,7 +185,7 @@ def get_durable_sleep_helper() -> str:
     """Return the _durable_sleep helper function source.
 
     This function is injected into the artifact to provide durable sleep
-    functionality. It uses the context's step mechanism to persist sleep
+    functionality. It uses set_variable/get_variable to persist sleep
     state across restarts.
 
     Returns:
@@ -196,8 +195,8 @@ def get_durable_sleep_helper() -> str:
 def _durable_sleep(seconds: float, step_name: str = "sleep") -> None:
     """Durable sleep that survives process restarts.
 
-    Uses Highway's step mechanism to persist sleep state. If the process
-    restarts during sleep, it will resume from where it left off.
+    Uses Highway's variable storage to persist sleep state. If the process
+    restarts during sleep, it will calculate remaining time and continue.
 
     Args:
         seconds: Duration to sleep in seconds
@@ -209,14 +208,29 @@ def _durable_sleep(seconds: float, step_name: str = "sleep") -> None:
     from . import highway_context as _hc
     ctx = _hc.get_context()
 
-    # Use context's step mechanism for durability
-    # The step checks if we've already completed this sleep
-    def do_sleep():
-        _time.sleep(seconds)
-        return {"slept": seconds}
+    # Check if this sleep was already completed
+    completed_key = f"_sleep_done_{step_name}"
+    if ctx.get_variable(completed_key, False):
+        return  # Already slept, skip
 
-    # Execute as a step - if already done, returns immediately
-    ctx.step(step_name, do_sleep)
+    # Check if sleep was started (for resumption after restart)
+    start_key = f"_sleep_start_{step_name}"
+    start_time = ctx.get_variable(start_key, None)
+
+    if start_time is None:
+        # First time - record start time
+        start_time = _time.time()
+        ctx.set_variable(start_key, start_time)
+
+    # Calculate remaining sleep time
+    elapsed = _time.time() - start_time
+    remaining = max(0, seconds - elapsed)
+
+    if remaining > 0:
+        _time.sleep(remaining)
+
+    # Mark as completed
+    ctx.set_variable(completed_key, True)
 '''
 
 

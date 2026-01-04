@@ -24,8 +24,14 @@ import os
 import tempfile
 import textwrap
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+
+from highway.transforms import (
+    DurableSleepTransformer,
+    get_durable_sleep_helper,
+)
 
 if TYPE_CHECKING:
     pass
@@ -218,7 +224,7 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
     """Generate tasks.py module content with original functions and wrappers.
 
     For each user function, generates:
-    1. The original function (decorators stripped, signature unchanged)
+    1. The original function (decorators stripped, time.sleep() transformed)
     2. A wrapper function (_hw_<name>) that handles ctx injection
 
     The wrapper:
@@ -226,6 +232,11 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
     - Inspects original function signature at runtime
     - If original wants ctx: passes it through
     - If original doesn't want ctx: sets thread-local context for get_context()
+
+    Durable Sleep Transformation:
+    - time.sleep() calls are automatically transformed to _durable_sleep()
+    - This makes sleeps survive process restarts
+    - The _durable_sleep helper is included in the module
 
     Args:
         functions: Dict mapping function name to callable
@@ -238,6 +249,9 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
         '',
         'Contains original functions and wrapper functions (_hw_*).',
         'Engine calls wrappers; wrappers handle ctx injection.',
+        '',
+        'Durable Sleep: time.sleep() calls are transformed to _durable_sleep()',
+        'which persists sleep state across restarts.',
         '"""',
         '',
         'from __future__ import annotations',
@@ -252,13 +266,18 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
         '    from highway_engine.durable_context import DurableContext',
         '',
         '',
+        '# === Durable Sleep Helper ===',
+        get_durable_sleep_helper().strip(),
+        '',
+        '',
+        '# === User Functions (with time.sleep() transformed) ===',
     ]
 
     for func_name, func in functions.items():
         try:
             source = inspect.getsource(func)
-            # Strip decorators only - DO NOT inject ctx
-            cleaned_source = _strip_decorators(source, func_name)
+            # Strip decorators and apply durable transforms
+            cleaned_source = _strip_decorators_and_transform(source, func_name)
             lines.append(cleaned_source)
             lines.append('')
             lines.append('')
@@ -295,7 +314,7 @@ def _generate_wrapper(func_name: str) -> str:
         Python source code for wrapper function
     """
     # Use string formatting to avoid AST complexity
-    wrapper = '''def _hw_{func_name}(ctx, *_args, **_kwargs):
+    wrapper = f'''def _hw_{func_name}(ctx, *_args, **_kwargs):
     """Highway wrapper for {func_name} - handles ctx injection."""
     _sig = _inspect.signature({func_name})
     _params = list(_sig.parameters.keys())
@@ -309,7 +328,7 @@ def _generate_wrapper(func_name: str) -> str:
         try:
             return {func_name}(*_args, **_kwargs)
         finally:
-            _hc._clear_context()'''.format(func_name=func_name)
+            _hc._clear_context()'''
 
     return wrapper
 
@@ -409,6 +428,60 @@ def _strip_decorators(source: str, func_name: str) -> str:
     node.decorator_list = []
 
     # Generate clean source
+    return ast.unparse(node)
+
+
+def _strip_decorators_and_transform(source: str, func_name: str) -> str:
+    """Strip decorators and apply durable transformations to function source.
+
+    This combines decorator stripping with AST transformations for durability:
+    1. Remove @driver decorators
+    2. Transform time.sleep() calls to _durable_sleep()
+
+    The transformed function will use durable sleep that survives restarts.
+    Developers write natural Python (time.sleep()), and we automatically
+    make it durable.
+
+    Args:
+        source: Original function source code
+        func_name: Name of the function (for error messages and step naming)
+
+    Returns:
+        Cleaned and transformed source code
+    """
+    # Dedent source to handle indented functions
+    source = textwrap.dedent(source)
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        raise ValueError("Cannot parse source for '%s': %s" % (func_name, e))
+
+    if not tree.body:
+        raise ValueError("Empty source for function '%s'" % func_name)
+
+    node = tree.body[0]
+
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        raise ValueError("Expected function definition for '%s'" % func_name)
+
+    # Remove all decorators - signature stays unchanged
+    node.decorator_list = []
+
+    # Apply durable sleep transformation (time.sleep() -> _durable_sleep())
+    transformer = DurableSleepTransformer(func_name)
+    node = transformer.visit(node)
+    ast.fix_missing_locations(node)
+
+    # Log if any transformations were applied
+    if transformer.sleep_count > 0:
+        logger.debug(
+            "Transformed %d time.sleep() calls to _durable_sleep() in %s",
+            transformer.sleep_count,
+            func_name,
+        )
+
+    # Generate transformed source
     return ast.unparse(node)
 
 
