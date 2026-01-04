@@ -4,7 +4,7 @@ This package provides a DBOS-style decorator interface for defining
 and executing workflows on Highway. It reduces workflow definition
 from 400+ lines to ~10 lines.
 
-All execution goes through: Driver -> Stabilize -> Highway API
+Workflows are built using highway_dsl and submitted directly to the Highway API.
 
 Example:
     from highway import Driver

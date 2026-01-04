@@ -277,18 +277,6 @@ For tasks longer than 30 seconds, set appropriate ``timeout`` values:
     def long_running_task():
         return "sleep 90 && echo 'Done'"
 
-Persistence
------------
-
-Highway Driver uses SQLite for local state persistence at ``stabilize.db``.
-This enables:
-
-- Submit workflow, exit driver, check status later
-- Resume from crashes
-- Idempotent execution
-
-The database is created automatically in your working directory.
-
 Framework Integration
 ---------------------
 

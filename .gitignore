@@ -207,7 +207,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# Stabilize database files
 stabilize.db
 stabilize.db-journal
 stabilize.db-shm
 stabilize.db-wal
+.stabilize.db
+.stabilize.db-journal
+.stabilize.db-shm
+.stabilize.db-wal

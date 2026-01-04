@@ -6,30 +6,26 @@ Users import Driver and use @driver.task() to define workflows.
 
 from __future__ import annotations
 
-import ast
-import inspect
 import logging
 import os
-import textwrap
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, TypeVar
-
-logger = logging.getLogger(__name__)
+from typing import Any, TypeVar
 
 from highway.ast_utils import FunctionAnalyzer
-
-if TYPE_CHECKING:
-    from highway.runner import HighwayRunner
-
+from highway.builder import DriverWorkflowBuilder
+from highway.client import HighwayClient
 from highway.exceptions import (
     ConfigurationError,
+    ExecutionError,
     NotSupportedError,
     TaskDefinitionError,
 )
-from highway.result import WorkflowResult
+from highway.result import TaskResult, WorkflowResult, WorkflowState, WorkflowStatus
 from highway.task import TaskDefinition, TaskType
+
+logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -41,12 +37,9 @@ class Driver:
     and executing workflows on Highway. It handles:
 
     - Task registration via @driver.task() decorator
-    - Workflow DSL generation
-    - Execution via Stabilize orchestration layer
+    - Workflow DSL generation via highway_dsl
+    - Direct execution via Highway API
     - Status polling and result retrieval
-
-    Architecture (Golden Rule - Driver NEVER talks directly to Highway):
-        Driver -> Stabilize (HighwayTask) -> Highway API
 
     Example:
         from highway import Driver
@@ -85,11 +78,7 @@ class Driver:
             api_key: Highway API key. If not provided, reads from
                      HIGHWAY_API_KEY environment variable.
             endpoint: Highway API endpoint URL.
-                      Defaults to https://highway.solutions
-
-        Note:
-            API key is required. All execution goes through
-            Stabilize -> Highway API.
+                      Defaults to https://highway.run
 
         Example:
             driver = Driver(name="payment-processor")  # Explicit name
@@ -97,14 +86,31 @@ class Driver:
         """
         self._name = name
         self.api_key = api_key or os.environ.get("HIGHWAY_API_KEY", "")
-        self.endpoint = endpoint or os.environ.get("HIGHWAY_API_ENDPOINT", "https://highway.solutions")
+        self.endpoint = endpoint or os.environ.get(
+            "HIGHWAY_API_ENDPOINT", "https://highway.run"
+        )
         self._tasks: dict[str, TaskDefinition] = {}
         self._analyzer = FunctionAnalyzer()
+        self._client: HighwayClient | None = None
 
     @property
     def tasks(self) -> dict[str, TaskDefinition]:
         """Get all registered tasks."""
         return self._tasks.copy()
+
+    def _get_client(self) -> HighwayClient:
+        """Get or create the Highway client."""
+        if self._client is None:
+            if not self.api_key:
+                raise ConfigurationError(
+                    "HIGHWAY_API_KEY not configured. "
+                    "Set environment variable or pass api_key to Driver()"
+                )
+            self._client = HighwayClient(
+                api_key=self.api_key,
+                endpoint=self.endpoint,
+            )
+        return self._client
 
     def task(
         self,
@@ -127,7 +133,6 @@ class Driver:
         entrypoint: str | None = None,
         func_args: list[Any] | None = None,
         func_kwargs: dict[str, Any] | None = None,
-        local: bool = False,
     ) -> Callable[[F], F]:
         """Decorator to register a task with the Driver.
 
@@ -135,7 +140,7 @@ class Driver:
         defines what the task does:
 
         - shell=True: Function returns a shell command string
-        - py=True: Function is executed as Python code via tools.code.exec
+        - py=True: Function is executed as Python code via tools.python.run
         - http=True: Function returns HTTP request configuration
         - tool="tools.X.Y": Function returns kwargs for any Highway tool
         - workflow="name": Execute another workflow by name (latest version)
@@ -143,7 +148,7 @@ class Driver:
 
         Args:
             shell: Execute as shell command (function returns command string)
-            py: Execute as Python code on Highway via tools.code.exec
+            py: Execute as Python code on Highway via tools.python.run
             http: Execute as HTTP request (function returns config dict)
             tool: Highway tool name (e.g., "tools.llm.call", "tools.database.query")
             workflow: Execute workflow by name (uses latest version)
@@ -166,10 +171,6 @@ class Driver:
                      to the function at runtime.
             entrypoint: Module:function path for package mode (e.g., "main:run").
                         Required when package is specified.
-            local: Execute locally via Stabilize native tasks instead of Highway.
-                   When True, shell tasks use ShellTask, http tasks use HTTPTask.
-                   This is useful for local operations like opening browsers,
-                   running local builds, or deployment scripts.
 
         Returns:
             Decorated function (unchanged)
@@ -206,15 +207,13 @@ class Driver:
             def trigger_report():
                 return {"inputs": {"date": "2024-01-01"}}
         """
-        # Validate package/entrypoint requirements BEFORE task type check
-        # This gives more helpful error messages
+        # Validate package/entrypoint requirements
         if package is not None and not durable:
             raise ValueError("package requires durable=True")
         if package is not None and entrypoint is None:
             raise ValueError("package requires entrypoint (e.g., 'main:run')")
 
         # Validate task type - exactly one must be specified
-        # durable=True implies Python execution (tools.python.run instead of tools.code.exec)
         type_flags = [
             shell,
             py,
@@ -222,7 +221,7 @@ class Driver:
             tool is not None,
             workflow is not None,
             workflow_id is not None,
-            durable,  # durable=True is a Python task type variant
+            durable,
         ]
         if sum(type_flags) == 0:
             raise TaskDefinitionError(
@@ -240,12 +239,14 @@ class Driver:
             if durable:
                 specified.append("durable")
             if tool:
-                specified.append("tool='%s'" % tool)
+                specified.append(f"tool='{tool}'")
             if workflow:
-                specified.append("workflow='%s'" % workflow)
+                specified.append(f"workflow='{workflow}'")
             if workflow_id:
-                specified.append("workflow_id='%s'" % workflow_id)
-            raise TaskDefinitionError("Only one task type allowed. Got: %s" % ", ".join(specified))
+                specified.append(f"workflow_id='{workflow_id}'")
+            raise TaskDefinitionError(
+                f"Only one task type allowed. Got: {', '.join(specified)}"
+            )
 
         # Check for unsupported features
         if run_at is not None:
@@ -263,9 +264,8 @@ class Driver:
         schedule_str: str | None = None
         if schedule is not None:
             if isinstance(schedule, timedelta):
-                # Convert timedelta to seconds for interval scheduling
                 total_seconds = int(schedule.total_seconds())
-                schedule_str = "@every %ds" % total_seconds
+                schedule_str = f"@every {total_seconds}s"
             else:
                 schedule_str = schedule
 
@@ -273,27 +273,22 @@ class Driver:
         if shell:
             task_type = TaskType.SHELL
         elif py or durable:
-            # Both py=True and durable=True are Python execution
-            # py=True → tools.code.exec (isolated, no DurableContext)
-            # durable=True → tools.python.run (with DurableContext)
             task_type = TaskType.PYTHON
         elif http:
             task_type = TaskType.HTTP
         elif tool:
             task_type = TaskType.TOOL
         else:
-            # workflow or workflow_id
             task_type = TaskType.WORKFLOW
 
         def decorator(func: F) -> F:
-            # Check for duplicate registration
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+                raise TaskDefinitionError(
+                    f"Task '{func.__name__}' is already registered"
+                )
 
-            # Analyze function with AST
             analysis = self._analyzer.analyze(func)
 
-            # Create task definition
             task_def = TaskDefinition(
                 name=func.__name__,
                 func=func,
@@ -314,16 +309,14 @@ class Driver:
                 entrypoint=entrypoint,
                 func_args=func_args,
                 func_kwargs=func_kwargs,
-                local=local,
             )
 
             self._tasks[func.__name__] = task_def
             logger.info(
-                "Registered task '%s' (type=%s, durable=%s, local=%s, depends=%s)",
+                "Registered task '%s' (type=%s, durable=%s, depends=%s)",
                 func.__name__,
                 task_type.name,
                 durable,
-                local,
                 depends or [],
             )
             return func
@@ -356,8 +349,7 @@ class Driver:
 
             @driver.foreach(items="{{get_items_result.item_list}}", depends=["get_items"])
             def process_item():
-                # {{current_item}} available here
-                return "echo 'Processing item'"
+                return "echo 'Processing item {{current_item}}'"
 
             @driver.task(py=True, depends=["process_item"])
             def verify_all():
@@ -366,7 +358,9 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+                raise TaskDefinitionError(
+                    f"Task '{func.__name__}' is already registered"
+                )
 
             analysis = self._analyzer.analyze(func)
 
@@ -397,41 +391,35 @@ class Driver:
         depends: list[str] | None = None,
         timeout: int = 300,
         max_iterations: int = 100,
-        durable: bool = True,
     ) -> Callable[[F], F]:
         """Decorator to define a While loop with a condition.
 
         The decorated function is executed repeatedly while condition is true.
-        Defaults to durable=True to enable mutable workflow variables via
-        ctx.set_variable() / ctx.get_variable().
 
         Args:
             condition: Expression to evaluate (e.g., "{{counter}} < 10")
             depends: List of task names this depends on
             timeout: Execution timeout in seconds per iteration
             max_iterations: Safety limit on iterations (default 100)
-            durable: Use tools.python.run with DurableContext (default True)
 
         Returns:
             Decorated function
 
         Example:
-            @driver.task(durable=True)
-            def init(ctx):
-                ctx.set_variable("counter", 0)
-                ctx.set_variable("limit", 5)
-                return {"initialized": True}
+            @driver.task(py=True)
+            def init():
+                return {"counter": 0, "limit": 5}
 
-            @driver.while_loop(condition="{{counter}} < {{limit}}", depends=["init"])
-            def increment(ctx):
-                counter = ctx.get_variable("counter", 0)
-                ctx.set_variable("counter", counter + 1)
-                return {"iteration": counter + 1}
+            @driver.while_loop(condition="{{init_result.counter}} < {{init_result.limit}}", depends=["init"])
+            def increment():
+                return "echo 'Iteration'"
         """
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+                raise TaskDefinitionError(
+                    f"Task '{func.__name__}' is already registered"
+                )
 
             analysis = self._analyzer.analyze(func)
 
@@ -443,16 +431,14 @@ class Driver:
                 timeout=timeout,
                 condition=condition,
                 analysis=analysis,
-                durable=durable,
             )
 
             self._tasks[func.__name__] = task_def
             logger.info(
-                "Registered while_loop '%s' (condition=%s, max_iter=%d, durable=%s)",
+                "Registered while_loop '%s' (condition=%s, max_iter=%d)",
                 func.__name__,
                 condition,
                 max_iterations,
-                durable,
             )
             return func
 
@@ -486,7 +472,9 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+                raise TaskDefinitionError(
+                    f"Task '{func.__name__}' is already registered"
+                )
 
             task_def = TaskDefinition(
                 name=func.__name__,
@@ -539,7 +527,9 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError("Task '%s' is already registered" % func.__name__)
+                raise TaskDefinitionError(
+                    f"Task '{func.__name__}' is already registered"
+                )
 
             task_def = TaskDefinition(
                 name=func.__name__,
@@ -569,8 +559,6 @@ class Driver:
         inputs: dict[str, Any] | None = None,
     ) -> WorkflowResult:
         """Execute all registered tasks as a workflow.
-
-        All execution goes through Stabilize -> Highway API.
 
         Args:
             wait: If True, wait for completion. If False, return immediately
@@ -605,473 +593,120 @@ class Driver:
             if errors:
                 raise TaskDefinitionError("; ".join(errors))
 
-        return self._run_via_stabilize(
-            wait=wait, timeout=timeout, workflow_id=workflow_id, inputs=inputs
+        # Build workflow using highway_dsl
+        workflow_name = self._get_workflow_name()
+        builder = DriverWorkflowBuilder(workflow_name, version="1.0.0")
+
+        for task_def in self._tasks.values():
+            builder.add_task(task_def)
+
+        workflow_json = builder.build()
+        workflow_json["timeout_seconds"] = int(timeout)
+
+        # Add inputs as variables
+        if inputs:
+            workflow_json["variables"] = inputs
+
+        # Submit to Highway
+        client = self._get_client()
+        run_id = client.submit_workflow(
+            workflow_definition=workflow_json,
+            inputs=inputs,
+            idempotency_key=workflow_id,
         )
 
-    def _run_via_stabilize(
-        self,
-        wait: bool = True,
-        timeout: float = 300,
-        workflow_id: str | None = None,
-        inputs: dict[str, Any] | None = None,
-    ) -> WorkflowResult:
-        """Execute tasks via Stabilize orchestration layer.
-
-        Routing logic:
-        - All local tasks: Use Stabilize native tasks (ShellTask, HTTPTask, etc.)
-        - All Highway tasks: Use HighwayTask to submit to Highway API
-        - Mixed: Currently not supported (Phase 2)
-
-        Flow for Highway tasks:
-        1. Build Highway workflow JSON from registered tasks
-        2. If durable tasks exist, package functions and create multi-stage workflow
-        3. Stabilize's HighwayTask submits to Highway API
-        4. Stabilize polls and manages state
-        5. Return results from Stabilize store
-
-        Args:
-            wait: If True, wait for completion
-            timeout: Maximum wait time in seconds
-            workflow_id: Optional workflow ID for idempotency
-            inputs: Workflow input variables
-
-        Returns:
-            WorkflowResult with execution status
-        """
-        inputs = inputs or {}
-        runner = self._get_runner()
-
-        # Check for local vs Highway task routing
-        has_local = self.has_local_tasks()
-        has_highway = self.has_highway_tasks()
-
-        if has_local and has_highway:
-            # Mixed workflows - Phase 2 will implement this
-            raise NotSupportedError(
-                "Mixed local and Highway tasks in the same workflow",
-                "Phase 2 of unified API"
+        if not wait:
+            return WorkflowResult(
+                run_id=run_id,
+                status=WorkflowStatus.RUNNING,
+                state=WorkflowState.RUNNING,
+                tasks={},
             )
 
-        if has_local and not has_highway:
-            # All local tasks - use Stabilize native tasks
-            local_tasks = self.get_local_tasks()
-            if wait:
-                return runner.run_local(local_tasks, inputs, timeout)
-            else:
-                # TODO: Add submit_local for async local execution
-                return runner.run_local(local_tasks, inputs, timeout)
-
-        # All Highway tasks - existing behavior
-        if not self.api_key:
-            raise ConfigurationError(
-                "HIGHWAY_API_KEY not configured. "
-                "Set environment variable or pass api_key to Driver()"
-            )
-
-        # Build workflow JSON with workflow-level timeout and inputs
-        workflow_json = self._build_workflow(workflow_timeout=int(timeout), inputs=inputs)
-
-        # Collect durable task info for artifact packaging
-        durable_functions = self.get_durable_functions() if self.needs_artifact() else None
-        package_dirs = self.get_package_dirs() if self.needs_artifact() else None
-
-        if wait:
-            return runner.run(
-                workflow_json,
-                inputs={},
+        # Wait for completion
+        try:
+            result = client.wait_for_completion(
+                run_id=run_id,
+                poll_interval=1.0,
                 timeout=timeout,
-                workflow_id=workflow_id,
-                durable_functions=durable_functions,
-                package_dirs=package_dirs,
-            )
-        else:
-            return runner.submit(
-                workflow_json,
-                inputs={},
-                workflow_id=workflow_id,
-                durable_functions=durable_functions,
-                package_dirs=package_dirs,
             )
 
-    def _get_runner(self) -> HighwayRunner:
-        """Get or create the Highway runner instance.
+            # Convert Highway response to WorkflowResult
+            return self._parse_highway_result(run_id, result)
 
-        Returns:
-            HighwayRunner for Highway API communication
-        """
-        from highway.runner import HighwayRunner
+        except ExecutionError as e:
+            return WorkflowResult(
+                run_id=run_id,
+                status=WorkflowStatus.FAILED,
+                state=WorkflowState.FAILED,
+                error=str(e),
+                tasks={},
+            )
 
-        return HighwayRunner(
-            api_key=self.api_key,
-            endpoint=self.endpoint,
-        )
+        except TimeoutError as e:
+            return WorkflowResult(
+                run_id=run_id,
+                status=WorkflowStatus.RUNNING,
+                state=WorkflowState.RUNNING,
+                error=str(e),
+                tasks={},
+            )
 
-    def _timedelta_to_iso8601(self, td: timedelta) -> str:
-        """Convert timedelta to ISO 8601 duration format.
-
-        Highway's WaitOperator expects durations in ISO 8601 format.
-
-        Args:
-            td: timedelta to convert
-
-        Returns:
-            ISO 8601 duration string (e.g., "PT3S", "PT7200S")
-
-        Examples:
-            timedelta(seconds=3) -> "PT3S"
-            timedelta(hours=2) -> "PT7200S"
-            timedelta(days=1) -> "PT86400S"
-        """
-        total_seconds = int(td.total_seconds())
-        return "PT%dS" % total_seconds
-
-    def _build_workflow(
-        self,
-        workflow_timeout: int = 300,
-        inputs: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Build Highway DSL workflow JSON from registered tasks.
-
-        Args:
-            workflow_timeout: Workflow-level timeout in seconds
-            inputs: Workflow input variables
-
-        Returns:
-            Workflow definition dict for Highway API
-        """
-        # Determine workflow name: explicit > derived from first task > uuid fallback
-        # Note: Highway DB constraint requires underscores, not dashes
+    def _get_workflow_name(self) -> str:
+        """Generate workflow name."""
         if self._name:
-            workflow_name = self._name.replace("-", "_")
+            return self._name.replace("-", "_")
         elif self._tasks:
             first_task = next(iter(self._tasks.keys()))
-            workflow_name = "workflow_%s" % first_task
+            return f"workflow_{first_task}"
         else:
-            workflow_name = "driver_workflow_%s" % uuid.uuid4().hex[:8]
+            return f"driver_workflow_{uuid.uuid4().hex[:8]}"
 
-        logger.debug(
-            "Building workflow '%s' with %d tasks",
-            workflow_name,
-            len(self._tasks),
-        )
+    def _parse_highway_result(
+        self, run_id: str, highway_data: dict[str, Any]
+    ) -> WorkflowResult:
+        """Parse Highway API response into WorkflowResult."""
+        state_str = highway_data.get("state", "unknown")
 
-        tasks_json: dict[str, Any] = {}
-
-        for name, task in self._tasks.items():
-            # If task has delay, insert a wait task first
-            if task.delay is not None:
-                wait_task_id = "%s_wait" % name
-                wait_duration = self._timedelta_to_iso8601(task.delay)
-
-                tasks_json[wait_task_id] = {
-                    "task_id": wait_task_id,
-                    "operator_type": "wait",
-                    "dependencies": task.depends,  # Wait inherits original deps
-                    "trigger_rule": "all_success",
-                    "wait_for": wait_duration,
-                }
-
-                # Actual task depends on wait task instead of original deps
-                actual_deps = [wait_task_id]
-            else:
-                actual_deps = task.depends
-
-            task_json: dict[str, Any] = {
-                "task_id": name,
-                "operator_type": "task",
-                "dependencies": actual_deps,
-                "trigger_rule": "all_success",
-                "result_key": task.get_result_key(),
-            }
-
-            # Add timeout for the task
-            if task.timeout > 0:
-                task_json["timeout_seconds"] = task.timeout
-
-            # Add retry configuration if specified
-            if task.retries > 0:
-                task_json["retry_policy"] = {
-                    "max_attempts": task.retries + 1,  # +1 for initial attempt
-                    "initial_interval_seconds": task.retry_delay,
-                    "backoff_coefficient": task.backoff_rate,
-                }
-
-            if task.task_type == TaskType.SHELL:
-                # Get command from function
-                command = task.func()
-                task_json["function"] = "tools.shell.run"
-                task_json["args"] = [command]
-                task_json["kwargs"] = {}
-
-            elif task.task_type == TaskType.HTTP:
-                # Get config from function
-                config = task.func()
-                task_json["function"] = "tools.http.request"
-                task_json["kwargs"] = config
-
-            elif task.task_type == TaskType.PYTHON:
-                if task.durable:
-                    # Use tools.python.run with DurableContext
-                    task_json["function"] = "tools.python.run"
-
-                    if task.package:
-                        # External package mode: use specified entrypoint
-                        # entrypoint format: "cli:main" -> "issuedb.cli.main"
-                        package_name = os.path.basename(task.package.rstrip("/"))
-                        module_path, func_name = task.entrypoint.split(":")
-                        task_json["args"] = ["%s.%s.%s" % (package_name, module_path, func_name)]
-                    else:
-                        # Auto-packaged function mode
-                        # Uses wrapper: driver_tasks.tasks._hw_<func_name>
-                        # Wrapper handles ctx injection for existing code compatibility
-                        task_json["args"] = ["driver_tasks.tasks._hw_%s" % task.func.__name__]
-
-                    # Add function positional args if specified
-                    if task.func_args:
-                        task_json["args"].extend(task.func_args)
-
-                    # Artifact ID will be injected by runner after upload
-                    task_json["kwargs"] = {"artifact_id": "{{_artifact_id}}"}
-
-                    # Add function keyword args if specified
-                    if task.func_kwargs:
-                        task_json["kwargs"].update(task.func_kwargs)
-                else:
-                    # Get function source code for remote execution
-                    source = inspect.getsource(task.func)
-                    source = textwrap.dedent(source)
-
-                    # Use AST to strip top-level decorators properly
-                    tree = ast.parse(source)
-                    func_def = tree.body[0]
-                    if isinstance(func_def, ast.FunctionDef):
-                        func_def.decorator_list = []  # Remove decorators
-                    source = ast.unparse(tree)
-
-                    # Generate wrapper that executes function and returns result as JSON
-                    # Highway's tools.code.exec runs this in a sandboxed environment
-                    wrapper = """
-import json
-
-%s
-
-_result = %s()
-# Output result in Highway-recognized format
-print("__HIGHWAY_RESULT__:" + json.dumps(_result))
-""" % (source, task.func.__name__)
-
-                    task_json["function"] = "tools.code.exec"
-                    task_json["kwargs"] = {
-                        "code": wrapper,
-                        "timeout": task.timeout,
-                    }
-
-            elif task.task_type == TaskType.TOOL:
-                # Generic Highway tool - function returns kwargs
-                config = task.func()
-                task_json["function"] = task.tool_name
-                task_json["kwargs"] = config if isinstance(config, dict) else {}
-
-            elif task.task_type == TaskType.WORKFLOW:
-                # Execute another workflow via tools.workflow.execute
-                config = task.func()
-                workflow_kwargs: dict[str, Any] = {}
-
-                # Set workflow identifier (name or definition_id)
-                if task.workflow_definition_id:
-                    workflow_kwargs["definition_id"] = task.workflow_definition_id
-                elif task.workflow_name:
-                    workflow_kwargs["workflow_name"] = task.workflow_name
-
-                # Include inputs from function return value
-                if isinstance(config, dict) and "inputs" in config:
-                    workflow_kwargs["inputs"] = config["inputs"]
-
-                task_json["function"] = "tools.workflow.execute"
-                task_json["kwargs"] = workflow_kwargs
-
-            elif task.task_type == TaskType.FOREACH:
-                # ForEach loop over a collection
-                source = inspect.getsource(task.func)
-                source = textwrap.dedent(source)
-
-                # Use AST to strip top-level decorators
-                tree = ast.parse(source)
-                func_def = tree.body[0]
-                if isinstance(func_def, ast.FunctionDef):
-                    func_def.decorator_list = []
-                source = ast.unparse(tree)
-
-                # Generate wrapper for loop body
-                wrapper = """
-import json
-
-%s
-
-_result = %s()
-print("__HIGHWAY_RESULT__:" + json.dumps(_result))
-""" % (source, task.func.__name__)
-
-                # Build loop body task (must match WorkflowBuilder format)
-                body_task_id = "%s_body" % name
-                body_task: dict[str, Any] = {
-                    "task_id": body_task_id,
-                    "operator_type": "task",
-                    "dependencies": [name],  # Loop body depends on foreach parent
-                    "trigger_rule": "all_success",
-                    "function": "tools.code.exec",
-                    "kwargs": {
-                        "code": wrapper,
-                        "timeout": task.timeout,
-                    },
-                    "result_key": "%s_item_result" % name,
-                    "is_internal_loop_task": True,  # Mark as internal loop task
-                }
-
-                # Override task_json for foreach operator
-                task_json = {
-                    "task_id": name,
-                    "operator_type": "foreach",
-                    "dependencies": actual_deps,
-                    "trigger_rule": "all_success",
-                    "items": task.items,
-                    "loop_body": [body_task],  # Must be a list
-                    "parallel": False,  # Sequential by default
-                    "result_key": task.get_result_key(),
-                }
-
-                # Also register the loop body as a top-level task
-                tasks_json[body_task_id] = body_task
-
-            elif task.task_type == TaskType.WHILE:
-                # While loop with condition
-                body_task_id = "%s_body" % name
-
-                if task.durable:
-                    # Use tools.python.run with DurableContext
-                    body_task: dict[str, Any] = {
-                        "task_id": body_task_id,
-                        "operator_type": "task",
-                        "dependencies": [name],
-                        "trigger_rule": "all_success",
-                        "function": "tools.python.run",
-                        "args": ["driver_tasks.tasks._hw_%s" % task.func.__name__],
-                        "kwargs": {"artifact_id": "{{_artifact_id}}"},
-                        "result_key": "%s_iteration_result" % name,
-                        "is_internal_loop_task": True,
-                    }
-                else:
-                    # Fall back to tools.code.exec (no DurableContext)
-                    source = inspect.getsource(task.func)
-                    source = textwrap.dedent(source)
-
-                    tree = ast.parse(source)
-                    func_def = tree.body[0]
-                    if isinstance(func_def, ast.FunctionDef):
-                        func_def.decorator_list = []
-                    source = ast.unparse(tree)
-
-                    wrapper = """
-import json
-
-%s
-
-_result = %s()
-print("__HIGHWAY_RESULT__:" + json.dumps(_result))
-""" % (source, task.func.__name__)
-
-                    body_task = {
-                        "task_id": body_task_id,
-                        "operator_type": "task",
-                        "dependencies": [name],
-                        "trigger_rule": "all_success",
-                        "function": "tools.code.exec",
-                        "kwargs": {
-                            "code": wrapper,
-                            "timeout": task.timeout,
-                        },
-                        "result_key": "%s_iteration_result" % name,
-                        "is_internal_loop_task": True,
-                    }
-
-                # Override task_json for while operator
-                task_json = {
-                    "task_id": name,
-                    "operator_type": "while",
-                    "dependencies": actual_deps,
-                    "trigger_rule": "all_success",
-                    "condition": task.condition,
-                    "loop_body": [body_task],  # Must be a list
-                    "result_key": task.get_result_key(),
-                }
-
-                # Also register the loop body as a top-level task
-                tasks_json[body_task_id] = body_task
-
-            elif task.task_type == TaskType.EMIT:
-                # Emit event operator
-                task_json = {
-                    "task_id": name,
-                    "operator_type": "emit_event",
-                    "dependencies": actual_deps,
-                    "trigger_rule": "all_success",
-                    "event_name": task.event_name,
-                    "payload": task.event_payload or {},
-                    "result_key": task.get_result_key(),
-                }
-
-            elif task.task_type == TaskType.WAIT_FOR:
-                # Wait for event operator
-                task_json = {
-                    "task_id": name,
-                    "operator_type": "wait_for_event",
-                    "dependencies": actual_deps,
-                    "trigger_rule": "all_success",
-                    "event_name": task.event_name,
-                    "timeout_seconds": task.event_timeout or 30,
-                    "result_key": task.get_result_key(),
-                }
-
-            tasks_json[name] = task_json
-
-        # Find start_task from generated tasks (tasks with no dependencies)
-        start_task: str | None = None
-        no_deps = [
-            task_id for task_id, task_def in tasks_json.items() if not task_def.get("dependencies")
-        ]
-        if no_deps:
-            start_task = sorted(no_deps)[0]
-
-        # Check for workflow-level schedule (from first scheduled task)
-        scheduled_tasks = [t for t in self._tasks.values() if t.schedule]
-        workflow_schedule: str | None = None
-        if scheduled_tasks:
-            # Use schedule from first scheduled task for workflow
-            workflow_schedule = scheduled_tasks[0].schedule
-
-        workflow_def: dict[str, Any] = {
-            "name": workflow_name,
-            "version": "1.0.0",
-            "description": "Workflow generated by Highway Driver SDK",
-            "start_task": start_task,
-            "tasks": tasks_json,
-            "variables": inputs or {},
-            "max_active_runs": 1,
-            "timeout_seconds": workflow_timeout,
+        # Map Highway states to our enum
+        state_map = {
+            "completed": WorkflowState.COMPLETED,
+            "failed": WorkflowState.FAILED,
+            "cancelled": WorkflowState.CANCELLED,
+            "running": WorkflowState.RUNNING,
+            "pending": WorkflowState.PENDING,
         }
+        state = state_map.get(state_str, WorkflowState.RUNNING)
 
-        # Add schedule if any tasks are scheduled
-        if workflow_schedule:
-            workflow_def["schedule"] = workflow_schedule
+        status_map = {
+            "completed": WorkflowStatus.COMPLETED,
+            "failed": WorkflowStatus.FAILED,
+            "cancelled": WorkflowStatus.CANCELLED,
+            "running": WorkflowStatus.RUNNING,
+            "pending": WorkflowStatus.PENDING,
+        }
+        status = status_map.get(state_str, WorkflowStatus.RUNNING)
 
-        logger.info(
-            "Workflow '%s' built: %d tasks, start_task=%s",
-            workflow_name,
-            len(tasks_json),
-            start_task,
+        # Parse task results from Highway response
+        tasks: dict[str, TaskResult] = {}
+        highway_result = highway_data.get("result", {})
+
+        if isinstance(highway_result, dict):
+            for task_name, task_data in highway_result.items():
+                if isinstance(task_data, dict):
+                    tasks[task_name] = TaskResult(
+                        state=WorkflowState.COMPLETED,
+                        result=task_data,
+                        error=None,
+                    )
+
+        return WorkflowResult(
+            run_id=run_id,
+            status=status,
+            state=state,
+            tasks=tasks,
+            error=highway_data.get("error"),
         )
-        return workflow_def
 
     def status(self, run_id: str) -> WorkflowResult:
         """Get current status of a workflow.
@@ -1082,41 +717,21 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
         Returns:
             WorkflowResult with current state
         """
-        if not self.api_key:
-            raise ConfigurationError("API key required for status()")
-
-        runner = self._get_runner()
-        return runner.status(run_id)
+        client = self._get_client()
+        result = client.get_status(run_id)
+        return self._parse_highway_result(run_id, result)
 
     def cancel(self, run_id: str) -> bool:
-        """Cancel a running workflow via Stabilize.
+        """Cancel a running workflow.
 
         Args:
-            run_id: Stabilize workflow run ID
+            run_id: Workflow run ID
 
         Returns:
             True if cancellation was successful
         """
-        if not self.api_key:
-            raise ConfigurationError("API key required for cancel()")
-
-        runner = self._get_runner()
-        return runner.cancel(run_id)
-
-    def logs(self, run_id: str) -> list[dict[str, Any]]:
-        """Get execution logs for a workflow.
-
-        Args:
-            run_id: Workflow run ID (Stabilize execution ID or Highway run ID)
-
-        Returns:
-            List of log entries from the workflow execution
-        """
-        if not self.api_key:
-            raise ConfigurationError("API key required for logs()")
-
-        runner = self._get_runner()
-        return runner.logs(run_id)
+        client = self._get_client()
+        return client.cancel_workflow(run_id)
 
     def start_workflow(
         self,
@@ -1142,7 +757,6 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
             handle = driver.start_workflow()
             print(handle.status)      # Check status
             result = handle.result    # Wait for completion
-            # or: result = await handle  # Async wait
         """
         from highway.handle import WorkflowHandle
 
@@ -1163,7 +777,6 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
             WorkflowHandle for tracking the workflow
 
         Example:
-            # Save run_id somewhere
             handle = driver.start_workflow()
             saved_run_id = handle.run_id
 
@@ -1199,9 +812,7 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
             Dict mapping function name to callable
         """
         return {
-            t.name: t.func
-            for t in self._tasks.values()
-            if t.durable and not t.package
+            t.name: t.func for t in self._tasks.values() if t.durable and not t.package
         }
 
     def get_package_dirs(self) -> dict[str, tuple[str, str]]:
@@ -1216,34 +827,33 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
             if t.durable and t.package
         }
 
-    def has_local_tasks(self) -> bool:
-        """Check if any tasks use local execution.
+    def _build_workflow(
+        self,
+        workflow_timeout: int = 300,
+        inputs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build workflow JSON for testing.
+
+        This method is primarily for testing compatibility.
+        Use run() for actual execution.
+
+        Args:
+            workflow_timeout: Workflow-level timeout in seconds
+            inputs: Workflow input variables
 
         Returns:
-            True if any tasks have local=True
+            Workflow definition dict
         """
-        return any(t.local for t in self._tasks.values())
+        workflow_name = self._get_workflow_name()
+        builder = DriverWorkflowBuilder(workflow_name, version="1.0.0")
 
-    def has_highway_tasks(self) -> bool:
-        """Check if any tasks use Highway execution.
+        for task_def in self._tasks.values():
+            builder.add_task(task_def)
 
-        Returns:
-            True if any tasks do NOT have local=True
-        """
-        return any(not t.local for t in self._tasks.values())
+        workflow_json = builder.build()
+        workflow_json["timeout_seconds"] = workflow_timeout
 
-    def get_local_tasks(self) -> dict[str, TaskDefinition]:
-        """Get all tasks that execute locally.
+        if inputs:
+            workflow_json["variables"] = inputs
 
-        Returns:
-            Dict mapping task name to TaskDefinition for local tasks
-        """
-        return {t.name: t for t in self._tasks.values() if t.local}
-
-    def get_highway_tasks(self) -> dict[str, TaskDefinition]:
-        """Get all tasks that execute on Highway.
-
-        Returns:
-            Dict mapping task name to TaskDefinition for Highway tasks
-        """
-        return {t.name: t for t in self._tasks.values() if not t.local}
+        return workflow_json
