@@ -34,6 +34,7 @@ from stabilize.queue.sqlite_queue import SqliteQueue
 from stabilize.tasks.highway import HighwayTask
 from stabilize.tasks.http import HTTPTask
 from stabilize.tasks.registry import TaskRegistry
+from stabilize.tasks.shell import ShellTask
 
 from highway.artifact import (
     PackagedArtifact,
@@ -41,6 +42,7 @@ from highway.artifact import (
     package_directory,
     package_functions,
 )
+from highway.task import TaskDefinition, TaskType
 
 if TYPE_CHECKING:
     from highway.result import WorkflowResult
@@ -94,6 +96,7 @@ class HighwayRunner:
         self._registry = TaskRegistry()
         self._registry.register("highway", HighwayTask)
         self._registry.register("http", HTTPTask)
+        self._registry.register("shell", ShellTask)
 
         # Setup processor with all handlers
         self._processor = QueueProcessor(self._queue)
@@ -648,7 +651,7 @@ class HighwayRunner:
         self,
         highway_status: str,
         stabilize_status: Any,
-    ) -> WorkflowState:
+    ) -> "WorkflowState":
         """Map status to WorkflowState enum.
 
         Args:
@@ -690,6 +693,250 @@ class HighwayRunner:
                 return WorkflowState.RUNNING
 
         return WorkflowState.PENDING
+
+    def run_local(
+        self,
+        local_tasks: dict[str, TaskDefinition],
+        inputs: dict[str, Any] | None = None,
+        timeout: float = 300,
+    ) -> "WorkflowResult":
+        """Execute local-only workflow via Stabilize native tasks.
+
+        Args:
+            local_tasks: Dict of task name -> TaskDefinition for local tasks
+            inputs: Optional workflow inputs
+            timeout: Maximum execution time in seconds
+
+        Returns:
+            WorkflowResult with execution results
+        """
+        from highway.result import WorkflowResult, WorkflowState
+
+        if not local_tasks:
+            return WorkflowResult(
+                run_id="",
+                status="failed",
+                state=WorkflowState.FAILED,
+                error="No local tasks to execute",
+            )
+
+        # Create Stabilize workflow for local tasks
+        stabilize_workflow = self._create_local_workflow(local_tasks, inputs or {})
+
+        # Store and start
+        self._store.store(stabilize_workflow)
+        self._orchestrator.start(stabilize_workflow)
+
+        logger.info(
+            "Local workflow submitted to Stabilize: stabilize_id=%s, tasks=%d",
+            stabilize_workflow.id,
+            len(local_tasks),
+        )
+
+        # Process until complete or timeout
+        self._processor.process_all(timeout=timeout)
+
+        # Get result from Stabilize store
+        result = self._store.retrieve(stabilize_workflow.id)
+        return self._convert_local_result(result, stabilize_workflow.id)
+
+    def _create_local_workflow(
+        self,
+        local_tasks: dict[str, TaskDefinition],
+        inputs: dict[str, Any],
+    ) -> Workflow:
+        """Create Stabilize Workflow with native tasks for local execution.
+
+        Args:
+            local_tasks: Dict of task name -> TaskDefinition
+            inputs: Workflow inputs
+
+        Returns:
+            Stabilize Workflow ready for execution
+        """
+        stages = []
+
+        for task_name, task_def in local_tasks.items():
+            if task_def.task_type == TaskType.SHELL:
+                stages.append(self._create_local_shell_stage(task_def, inputs))
+            elif task_def.task_type == TaskType.HTTP:
+                stages.append(self._create_local_http_stage(task_def, inputs))
+            # Python local tasks will be added in Phase 4
+
+        return Workflow.create(
+            application="highway-driver-local",
+            name="local_workflow",
+            stages=stages,
+        )
+
+    def _create_local_shell_stage(
+        self,
+        task_def: TaskDefinition,
+        inputs: dict[str, Any],
+    ) -> StageExecution:
+        """Create Stabilize stage with ShellTask for local shell execution.
+
+        Args:
+            task_def: TaskDefinition for the shell task
+            inputs: Workflow inputs
+
+        Returns:
+            StageExecution with ShellTask
+        """
+        # Get command from function
+        command = task_def.func()
+
+        # Build context for ShellTask
+        context = {
+            "command": command,
+            "timeout": task_def.timeout,
+        }
+
+        # Add any inputs to context for placeholder substitution
+        context.update(inputs)
+
+        # Build dependencies from task_def.depends
+        requisite_ids = set(task_def.depends) if task_def.depends else set()
+
+        return StageExecution(
+            ref_id=task_def.name,
+            type="shell",
+            name=task_def.name,
+            context=context,
+            requisite_stage_ref_ids=requisite_ids,
+            tasks=[
+                TaskExecution.create(
+                    name=task_def.name,
+                    implementing_class="shell",
+                    stage_start=True,
+                    stage_end=True,
+                ),
+            ],
+        )
+
+    def _create_local_http_stage(
+        self,
+        task_def: TaskDefinition,
+        inputs: dict[str, Any],
+    ) -> StageExecution:
+        """Create Stabilize stage with HTTPTask for local HTTP execution.
+
+        Args:
+            task_def: TaskDefinition for the http task
+            inputs: Workflow inputs
+
+        Returns:
+            StageExecution with HTTPTask
+        """
+        # Get HTTP config from function
+        config = task_def.func()
+
+        # Build context for HTTPTask
+        context = {
+            "url": config.get("url"),
+            "method": config.get("method", "GET"),
+            "headers": config.get("headers", {}),
+            "timeout": task_def.timeout,
+        }
+
+        # Add optional fields
+        if "json" in config:
+            context["json"] = config["json"]
+        if "body" in config:
+            context["body"] = config["body"]
+        if "form" in config:
+            context["form"] = config["form"]
+
+        # Add any inputs to context
+        context.update(inputs)
+
+        # Build dependencies from task_def.depends
+        requisite_ids = set(task_def.depends) if task_def.depends else set()
+
+        return StageExecution(
+            ref_id=task_def.name,
+            type="http",
+            name=task_def.name,
+            context=context,
+            requisite_stage_ref_ids=requisite_ids,
+            tasks=[
+                TaskExecution.create(
+                    name=task_def.name,
+                    implementing_class="http",
+                    stage_start=True,
+                    stage_end=True,
+                ),
+            ],
+        )
+
+    def _convert_local_result(
+        self,
+        stabilize_result: Workflow,
+        stabilize_id: str,
+    ) -> "WorkflowResult":
+        """Convert Stabilize local execution result to WorkflowResult.
+
+        Args:
+            stabilize_result: Stabilize Workflow after execution
+            stabilize_id: Stabilize execution ID
+
+        Returns:
+            WorkflowResult for highway-driver API
+        """
+        from highway.result import TaskResult, WorkflowResult, WorkflowState
+
+        # Map Stabilize status to WorkflowState
+        state = self._map_status_to_state("unknown", stabilize_result.status)
+
+        # Check if any stage failed
+        has_failure = False
+        tasks: dict[str, TaskResult] = {}
+
+        for stage in stabilize_result.stages:
+            # For successful tasks, outputs are in stage.outputs
+            # For failed tasks (terminal), outputs may be in stage.context
+            stage_outputs = stage.outputs or {}
+            stage_context = stage.context or {}
+
+            # Merge context keys that look like task outputs
+            # (returncode, stdout, stderr, truncated)
+            for key in ("returncode", "stdout", "stderr", "truncated"):
+                if key in stage_context and key not in stage_outputs:
+                    stage_outputs[key] = stage_context[key]
+
+            # Create task result from stage
+            task_state = WorkflowState.COMPLETED
+            error_msg = None
+            if hasattr(stage.status, "name"):
+                status_name = stage.status.name.lower()
+                if status_name in ("terminal", "failed"):
+                    task_state = WorkflowState.FAILED
+                    has_failure = True
+                    # Try to get error from context
+                    error_msg = stage_context.get("error")
+                elif status_name in ("succeeded", "completed"):
+                    task_state = WorkflowState.COMPLETED
+
+            tasks[stage.ref_id] = TaskResult(
+                name=stage.ref_id,
+                state=task_state,
+                result=stage_outputs,
+                error=error_msg,
+            )
+
+        # Determine overall state
+        if has_failure:
+            state = WorkflowState.FAILED
+        elif all(t.state == WorkflowState.COMPLETED for t in tasks.values()):
+            state = WorkflowState.COMPLETED
+
+        return WorkflowResult(
+            run_id=stabilize_id,
+            status="completed" if state == WorkflowState.COMPLETED else "failed",
+            state=state,
+            tasks=tasks,
+            stabilize_execution_id=stabilize_id,
+        )
 
 
 # Backwards compatibility alias

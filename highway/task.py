@@ -80,6 +80,8 @@ class TaskDefinition:
     entrypoint: str | None = None  # Module:function path (e.g., "main:run_calculation")
     func_args: list[Any] | None = None  # Positional args to pass to entrypoint function
     func_kwargs: dict[str, Any] | None = None  # Keyword args to pass to entrypoint function
+    # Local execution (Stabilize native tasks instead of Highway)
+    local: bool = False  # Execute locally via Stabilize native tasks (ShellTask, HTTPTask, etc.)
 
     def __post_init__(self) -> None:
         """Validate task definition after creation."""
@@ -103,6 +105,21 @@ class TaskDefinition:
                 raise ValueError(
                     "entrypoint must be in 'module:function' format, got '%s'" % self.entrypoint
                 )
+        # Validate local execution constraints
+        if self.local:
+            # Local only supports shell, python, http - not control flow or durable
+            supported_local = {TaskType.SHELL, TaskType.PYTHON, TaskType.HTTP}
+            if self.task_type not in supported_local:
+                raise ValueError(
+                    "local=True only supports shell, py, http tasks. "
+                    "Got task_type=%s" % self.task_type.value
+                )
+            if self.durable:
+                raise ValueError("local=True cannot be used with durable=True")
+            if self.schedule is not None:
+                raise ValueError("local=True cannot be used with schedule=")
+            if self.delay is not None:
+                raise ValueError("local=True cannot be used with delay=")
 
     def get_result_key(self) -> str:
         """Get the result key for this task in Highway workflow."""

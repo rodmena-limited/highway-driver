@@ -127,6 +127,7 @@ class Driver:
         entrypoint: str | None = None,
         func_args: list[Any] | None = None,
         func_kwargs: dict[str, Any] | None = None,
+        local: bool = False,
     ) -> Callable[[F], F]:
         """Decorator to register a task with the Driver.
 
@@ -165,6 +166,10 @@ class Driver:
                      to the function at runtime.
             entrypoint: Module:function path for package mode (e.g., "main:run").
                         Required when package is specified.
+            local: Execute locally via Stabilize native tasks instead of Highway.
+                   When True, shell tasks use ShellTask, http tasks use HTTPTask.
+                   This is useful for local operations like opening browsers,
+                   running local builds, or deployment scripts.
 
         Returns:
             Decorated function (unchanged)
@@ -309,14 +314,16 @@ class Driver:
                 entrypoint=entrypoint,
                 func_args=func_args,
                 func_kwargs=func_kwargs,
+                local=local,
             )
 
             self._tasks[func.__name__] = task_def
             logger.info(
-                "Registered task '%s' (type=%s, durable=%s, depends=%s)",
+                "Registered task '%s' (type=%s, durable=%s, local=%s, depends=%s)",
                 func.__name__,
                 task_type.name,
                 durable,
+                local,
                 depends or [],
             )
             return func
@@ -611,7 +618,12 @@ class Driver:
     ) -> WorkflowResult:
         """Execute tasks via Stabilize orchestration layer.
 
-        Flow:
+        Routing logic:
+        - All local tasks: Use Stabilize native tasks (ShellTask, HTTPTask, etc.)
+        - All Highway tasks: Use HighwayTask to submit to Highway API
+        - Mixed: Currently not supported (Phase 2)
+
+        Flow for Highway tasks:
         1. Build Highway workflow JSON from registered tasks
         2. If durable tasks exist, package functions and create multi-stage workflow
         3. Stabilize's HighwayTask submits to Highway API
@@ -627,19 +639,38 @@ class Driver:
         Returns:
             WorkflowResult with execution status
         """
+        inputs = inputs or {}
+        runner = self._get_runner()
+
+        # Check for local vs Highway task routing
+        has_local = self.has_local_tasks()
+        has_highway = self.has_highway_tasks()
+
+        if has_local and has_highway:
+            # Mixed workflows - Phase 2 will implement this
+            raise NotSupportedError(
+                "Mixed local and Highway tasks in the same workflow",
+                "Phase 2 of unified API"
+            )
+
+        if has_local and not has_highway:
+            # All local tasks - use Stabilize native tasks
+            local_tasks = self.get_local_tasks()
+            if wait:
+                return runner.run_local(local_tasks, inputs, timeout)
+            else:
+                # TODO: Add submit_local for async local execution
+                return runner.run_local(local_tasks, inputs, timeout)
+
+        # All Highway tasks - existing behavior
         if not self.api_key:
             raise ConfigurationError(
                 "HIGHWAY_API_KEY not configured. "
                 "Set environment variable or pass api_key to Driver()"
             )
 
-        inputs = inputs or {}
-
         # Build workflow JSON with workflow-level timeout and inputs
         workflow_json = self._build_workflow(workflow_timeout=int(timeout), inputs=inputs)
-
-        # Use Stabilize runner for execution
-        runner = self._get_runner()
 
         # Collect durable task info for artifact packaging
         durable_functions = self.get_durable_functions() if self.needs_artifact() else None
@@ -1184,3 +1215,35 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
             for t in self._tasks.values()
             if t.durable and t.package
         }
+
+    def has_local_tasks(self) -> bool:
+        """Check if any tasks use local execution.
+
+        Returns:
+            True if any tasks have local=True
+        """
+        return any(t.local for t in self._tasks.values())
+
+    def has_highway_tasks(self) -> bool:
+        """Check if any tasks use Highway execution.
+
+        Returns:
+            True if any tasks do NOT have local=True
+        """
+        return any(not t.local for t in self._tasks.values())
+
+    def get_local_tasks(self) -> dict[str, TaskDefinition]:
+        """Get all tasks that execute locally.
+
+        Returns:
+            Dict mapping task name to TaskDefinition for local tasks
+        """
+        return {t.name: t for t in self._tasks.values() if t.local}
+
+    def get_highway_tasks(self) -> dict[str, TaskDefinition]:
+        """Get all tasks that execute on Highway.
+
+        Returns:
+            Dict mapping task name to TaskDefinition for Highway tasks
+        """
+        return {t.name: t for t in self._tasks.values() if not t.local}
