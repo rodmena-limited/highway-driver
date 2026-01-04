@@ -6,6 +6,10 @@ This module provides common fixtures for both unit and acceptance tests.
 import os
 
 import pytest
+from dotenv import load_dotenv
+
+# Load .env file for API credentials
+load_dotenv()
 
 from highway import Driver
 

@@ -187,7 +187,8 @@ class HighwayClient:
 
         while time.time() - start < timeout:
             status = self.get_status(run_id)
-            state = status.get("state", status.get("status", "unknown"))
+            # Highway uses "status" field, not "state"
+            state = status.get("status", status.get("state", "unknown"))
 
             if state in self.TERMINAL_STATES:
                 if state == "failed":
@@ -208,10 +209,10 @@ class HighwayClient:
             run_id: The workflow run ID
 
         Returns:
-            True if cancelled successfully
+            True if cancelled successfully, False if already completed
 
         Raises:
-            ExecutionError: If cancellation fails
+            ExecutionError: If cancellation fails for other reasons
         """
         url = f"{self.endpoint}/api/v1/workflows/{run_id}/cancel"
 
@@ -221,6 +222,9 @@ class HighwayClient:
             return True
 
         except httpx.HTTPStatusError as e:
+            # CONFLICT (409) typically means already completed
+            if e.response.status_code == 409:
+                return False
             raise ExecutionError(f"Failed to cancel: {e.response.text}")
 
         except httpx.RequestError as e:

@@ -114,14 +114,14 @@ class DriverWorkflowBuilder:
             self._add_inline_python(task_def)
 
     def _add_inline_python(self, task_def: TaskDefinition) -> None:
-        """Add inline Python task using tools.python.run."""
-        # Extract function source and generate script
-        script = self._generate_python_script(task_def)
+        """Add inline Python task using tools.code.exec."""
+        # Extract function source and generate code
+        code = self._generate_python_code(task_def)
 
         self._builder.task(
             task_def.name,
-            "tools.python.run",
-            kwargs={"script": script},
+            "tools.code.exec",
+            kwargs={"code": code},
             dependencies=task_def.depends or [],
             result_key=task_def.get_result_key(),
         )
@@ -129,28 +129,34 @@ class DriverWorkflowBuilder:
 
     def _add_durable_python(self, task_def: TaskDefinition) -> None:
         """Add durable Python task with package artifact."""
-        kwargs: dict[str, Any] = {}
-
         if task_def.package and task_def.entrypoint:
-            # Package mode: upload package and call entrypoint
-            kwargs["package"] = task_def.package
-            kwargs["entrypoint"] = task_def.entrypoint
+            # Package mode: use tools.python.run with fully-qualified function
+            kwargs: dict[str, Any] = {
+                "package": task_def.package,
+                "entrypoint": task_def.entrypoint,
+            }
             if task_def.func_args:
                 kwargs["args"] = task_def.func_args
             if task_def.func_kwargs:
                 kwargs["kwargs"] = task_def.func_kwargs
-        else:
-            # Script mode: serialize function as script
-            script = self._generate_python_script(task_def)
-            kwargs["script"] = script
 
-        self._builder.activity(
-            task_def.name,
-            "tools.python.run",
-            kwargs=kwargs,
-            dependencies=task_def.depends or [],
-            result_key=task_def.get_result_key(),
-        )
+            self._builder.task(
+                task_def.name,
+                "tools.python.run",
+                kwargs=kwargs,
+                dependencies=task_def.depends or [],
+                result_key=task_def.get_result_key(),
+            )
+        else:
+            # Script mode: use tools.code.exec for inline code
+            code = self._generate_python_code(task_def)
+            self._builder.task(
+                task_def.name,
+                "tools.code.exec",
+                kwargs={"code": code},
+                dependencies=task_def.depends or [],
+                result_key=task_def.get_result_key(),
+            )
         self._apply_policies(task_def)
 
     def _add_http(self, task_def: TaskDefinition) -> None:
@@ -186,21 +192,21 @@ class DriverWorkflowBuilder:
 
         # Get tool args/kwargs from function
         result = task_def.func()
-        args = []
-        kwargs = {}
+        args: list[Any] = []
+        kwargs: dict[str, Any] = {}
 
         if isinstance(result, dict):
             kwargs = result
         elif isinstance(result, (list, tuple)):
             args = list(result)
-        else:
+        elif result is not None:
             args = [result]
 
         self._builder.task(
             task_def.name,
             task_def.tool_name,
-            args=args if args else None,
-            kwargs=kwargs if kwargs else None,
+            args=args,
+            kwargs=kwargs,
             dependencies=task_def.depends or [],
             result_key=task_def.get_result_key(),
         )
@@ -346,15 +352,21 @@ class DriverWorkflowBuilder:
             wait_task_name = f"{task_def.name}_delay"
             self._builder.wait(wait_task_name, task_def.delay)
 
-    def _generate_python_script(self, task_def: TaskDefinition) -> str:
-        """Generate Python script from function.
+    def _generate_python_code(self, task_def: TaskDefinition) -> str:
+        """Generate Python code from function for tools.code.exec.
+
+        Extracts function body and converts return statements to RESULT assignments.
+        Highway's code sandbox doesn't capture function return values, so we need
+        to inline the code and use RESULT variable directly.
 
         Args:
             task_def: Task definition with function
 
         Returns:
-            Python script string that can be executed by tools.python.run
+            Python code string that can be executed by tools.code.exec
         """
+        import re
+
         func = task_def.func
 
         # Get function source
@@ -363,31 +375,95 @@ class DriverWorkflowBuilder:
             # Dedent to handle decorated functions
             source = textwrap.dedent(source)
         except (OSError, TypeError):
-            # Can't get source, function might be a lambda or built-in
             raise WorkflowBuildError(
                 f"Cannot extract source for function '{task_def.name}'. "
                 "Ensure the function is defined in a regular Python file."
             )
 
-        # Remove decorator lines (lines starting with @)
         lines = source.split("\n")
-        non_decorator_lines = []
+
+        # Find the function definition line and extract body
+        body_lines = []
         in_function = False
+        in_docstring = False
+        docstring_quote = None
+        base_indent = None
+
         for line in lines:
             stripped = line.lstrip()
-            if stripped.startswith("def "):
+
+            # Skip decorators
+            if stripped.startswith("@") and not in_function:
+                continue
+
+            # Skip function definition line
+            if stripped.startswith("def ") and not in_function:
                 in_function = True
+                continue
+
             if in_function:
-                non_decorator_lines.append(line)
-            elif not stripped.startswith("@"):
-                non_decorator_lines.append(line)
+                # Handle docstrings at the start of function
+                if in_docstring:
+                    if docstring_quote in stripped:
+                        in_docstring = False
+                    continue
 
-        source = "\n".join(non_decorator_lines)
+                if not body_lines and (stripped.startswith('"""') or stripped.startswith("'''")):
+                    docstring_quote = stripped[:3]
+                    if stripped.count(docstring_quote) >= 2:
+                        # Single line docstring, skip it
+                        continue
+                    # Multi-line docstring starts
+                    in_docstring = True
+                    continue
 
-        # Generate wrapper that calls function and sets RESULT
-        script = f'''{source}
+                # Skip empty lines at the start
+                if not body_lines and not stripped:
+                    continue
 
-# Execute and capture result
-RESULT = {func.__name__}()
-'''
-        return script
+                # Determine base indentation from first real line
+                if base_indent is None and stripped:
+                    base_indent = len(line) - len(stripped)
+
+                # Dedent the line
+                if base_indent and line.startswith(" " * base_indent):
+                    line = line[base_indent:]
+
+                body_lines.append(line)
+
+        # Join body
+        code = "\n".join(body_lines).rstrip()
+
+        # Replace return statements with result assignment
+        # Highway sandbox captures the variable named 'result' (lowercase)
+        # Using intermediate variable because direct dict literal assignment doesn't work
+        # Handle both "return value" and bare "return"
+        code = re.sub(
+            r'^(\s*)return\s+(.+)$',
+            r'\1result = \2',
+            code,
+            flags=re.MULTILINE
+        )
+        code = re.sub(r'^(\s*)return\s*$', r'\1result = None', code, flags=re.MULTILINE)
+
+        # Detect and add required imports for standard library modules
+        imports = []
+        if re.search(r'\btime\.', code):
+            imports.append("import time")
+        if re.search(r'\bjson\.', code):
+            imports.append("import json")
+        if re.search(r'\bos\.', code):
+            imports.append("import os")
+        if re.search(r'\bmath\.', code):
+            imports.append("import math")
+        if re.search(r'\brandom\.', code):
+            imports.append("import random")
+        if re.search(r'\bdatetime\.', code):
+            imports.append("import datetime")
+        if re.search(r'\bre\.', code):
+            imports.append("import re")
+
+        if imports:
+            code = "\n".join(imports) + "\n\n" + code
+
+        return code

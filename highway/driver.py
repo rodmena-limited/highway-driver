@@ -618,7 +618,7 @@ class Driver:
         if not wait:
             return WorkflowResult(
                 run_id=run_id,
-                status=WorkflowStatus.RUNNING,
+                status="running",
                 state=WorkflowState.RUNNING,
                 tasks={},
             )
@@ -637,7 +637,7 @@ class Driver:
         except ExecutionError as e:
             return WorkflowResult(
                 run_id=run_id,
-                status=WorkflowStatus.FAILED,
+                status="failed",
                 state=WorkflowState.FAILED,
                 error=str(e),
                 tasks={},
@@ -646,7 +646,7 @@ class Driver:
         except TimeoutError as e:
             return WorkflowResult(
                 run_id=run_id,
-                status=WorkflowStatus.RUNNING,
+                status="running",
                 state=WorkflowState.RUNNING,
                 error=str(e),
                 tasks={},
@@ -666,7 +666,8 @@ class Driver:
         self, run_id: str, highway_data: dict[str, Any]
     ) -> WorkflowResult:
         """Parse Highway API response into WorkflowResult."""
-        state_str = highway_data.get("state", "unknown")
+        # Highway uses "status" field, not "state"
+        state_str = highway_data.get("status", highway_data.get("state", "unknown"))
 
         # Map Highway states to our enum
         state_map = {
@@ -678,15 +679,6 @@ class Driver:
         }
         state = state_map.get(state_str, WorkflowState.RUNNING)
 
-        status_map = {
-            "completed": WorkflowStatus.COMPLETED,
-            "failed": WorkflowStatus.FAILED,
-            "cancelled": WorkflowStatus.CANCELLED,
-            "running": WorkflowStatus.RUNNING,
-            "pending": WorkflowStatus.PENDING,
-        }
-        status = status_map.get(state_str, WorkflowStatus.RUNNING)
-
         # Parse task results from Highway response
         tasks: dict[str, TaskResult] = {}
         highway_result = highway_data.get("result", {})
@@ -694,15 +686,25 @@ class Driver:
         if isinstance(highway_result, dict):
             for task_name, task_data in highway_result.items():
                 if isinstance(task_data, dict):
+                    # Highway wraps code execution results in {'result': actual_result, ...}
+                    # Unwrap to get the actual user result
+                    actual_result = task_data
+                    if "result" in task_data and isinstance(task_data.get("result"), dict):
+                        actual_result = task_data["result"]
+                    elif "result" in task_data and task_data.get("success"):
+                        # For code.exec, the inner result is the user's return value
+                        actual_result = task_data["result"]
+
                     tasks[task_name] = TaskResult(
+                        name=task_name,
                         state=WorkflowState.COMPLETED,
-                        result=task_data,
-                        error=None,
+                        result=actual_result,
+                        error=task_data.get("error"),
                     )
 
         return WorkflowResult(
             run_id=run_id,
-            status=status,
+            status=state_str,
             state=state,
             tasks=tasks,
             error=highway_data.get("error"),
@@ -732,6 +734,20 @@ class Driver:
         """
         client = self._get_client()
         return client.cancel_workflow(run_id)
+
+    def logs(self, run_id: str) -> list[dict[str, Any]]:
+        """Get logs for a workflow run.
+
+        Args:
+            run_id: Highway workflow run ID
+
+        Returns:
+            List of log entries
+        """
+        client = self._get_client()
+        status = client.get_status(run_id)
+        # Extract logs from status if available
+        return status.get("logs", [])
 
     def start_workflow(
         self,
