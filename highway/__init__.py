@@ -39,6 +39,7 @@ from highway.exceptions import (
     TaskDefinitionError,
     WorkflowBuildError,
 )
+from highway.handle import WorkflowHandle
 from highway.result import (
     TaskResult,
     WorkflowResult,
@@ -53,6 +54,7 @@ __all__ = [
     # Main interface
     "Driver",
     "Context",
+    "WorkflowHandle",
     # Result types
     "WorkflowResult",
     "WorkflowStatus",

@@ -1087,6 +1087,63 @@ print("__HIGHWAY_RESULT__:" + json.dumps(_result))
         runner = self._get_runner()
         return runner.logs(run_id)
 
+    def start_workflow(
+        self,
+        timeout: float = 300,
+        workflow_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> "WorkflowHandle":
+        """Start workflow and return handle immediately.
+
+        This is the preferred way to run workflows asynchronously.
+        Returns a WorkflowHandle that provides a simple interface for
+        tracking and managing the workflow.
+
+        Args:
+            timeout: Default timeout for handle operations (seconds)
+            workflow_id: Custom workflow ID for idempotency
+            inputs: Workflow input variables
+
+        Returns:
+            WorkflowHandle for tracking the workflow
+
+        Example:
+            handle = driver.start_workflow()
+            print(handle.status)      # Check status
+            result = handle.result    # Wait for completion
+            # or: result = await handle  # Async wait
+        """
+        from highway.handle import WorkflowHandle
+
+        result = self.run(wait=False, timeout=timeout, workflow_id=workflow_id, inputs=inputs)
+        return WorkflowHandle(run_id=result.run_id, driver=self, timeout=timeout)
+
+    def retrieve_workflow(self, run_id: str, timeout: float = 300) -> "WorkflowHandle":
+        """Get handle for an existing workflow.
+
+        Allows monitoring workflows started in previous sessions or
+        by other processes.
+
+        Args:
+            run_id: The workflow run ID
+            timeout: Default timeout for handle operations (seconds)
+
+        Returns:
+            WorkflowHandle for tracking the workflow
+
+        Example:
+            # Save run_id somewhere
+            handle = driver.start_workflow()
+            saved_run_id = handle.run_id
+
+            # Later, retrieve it
+            handle = driver.retrieve_workflow(saved_run_id)
+            result = handle.result
+        """
+        from highway.handle import WorkflowHandle
+
+        return WorkflowHandle(run_id=run_id, driver=self, timeout=timeout)
+
     def clear(self) -> None:
         """Clear all registered tasks.
 

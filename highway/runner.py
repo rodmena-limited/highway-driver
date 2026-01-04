@@ -99,6 +99,9 @@ class HighwayRunner:
         self._processor = QueueProcessor(self._queue)
         self._register_handlers()
 
+        # Start background processing - Stabilize handles threading internally
+        self._processor.start()
+
         self._orchestrator = Orchestrator(self._queue)
 
     def _register_handlers(self) -> None:
@@ -247,7 +250,7 @@ class HighwayRunner:
                 workflow_json, inputs or {}, workflow_id
             )
 
-        # Store and start (non-blocking)
+        # Store and start - background processor handles execution
         self._store.store(stabilize_workflow)
         self._orchestrator.start(stabilize_workflow)
 

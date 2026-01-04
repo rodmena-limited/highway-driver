@@ -2,10 +2,10 @@
 """Submit long-running workflow and exit immediately.
 
 This example demonstrates:
-1. Submitting a workflow that takes ~3 minutes (3 phases x 60 seconds)
+1. Using start_workflow() to get a WorkflowHandle
 2. Driver exits immediately after submission
 3. Workflow continues running on Highway
-4. Status can be checked later using check_status.py
+4. Status can be checked later using check_status.py with retrieve_workflow()
 
 Run:
     python examples/long_running/submit.py
@@ -39,19 +39,18 @@ def main():
     print("Workflow structure: phase_1 (60s) -> phase_2 (60s) -> phase_3 (60s)")
     print()
 
-    # Submit with wait=False to return immediately
-    result = driver.run(wait=False, timeout=300)
+    # Use start_workflow() to get a WorkflowHandle
+    handle = driver.start_workflow(timeout=300)
 
     print("Workflow submitted successfully!")
     print()
-    print("Run ID: %s" % result.run_id)
-    print("Stabilize ID: %s" % result.stabilize_execution_id)
-    print("Status: %s" % result.status)
+    print("Run ID: %s" % handle.run_id)
+    print("Status: %s" % handle.status.state.value)
     print()
     print("Driver is exiting. Workflow continues running on Highway.")
     print()
     print("To check status, run:")
-    print("  python examples/long_running/check_status.py %s" % result.run_id)
+    print("  python examples/long_running/check_status.py %s" % handle.run_id)
 
 
 if __name__ == "__main__":
