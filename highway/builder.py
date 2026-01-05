@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import textwrap
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from highway_dsl import Duration, WorkflowBuilder
 
@@ -43,6 +43,24 @@ class DriverWorkflowBuilder:
         self._version = version
         self._builder = WorkflowBuilder(name, version=version)
         self._added_tasks: set[str] = set()
+        self._parallel_branch_tasks: set[str] = set()  # Tasks inside parallel branches
+        self._all_tasks: dict[str, TaskDefinition] = {}  # All task definitions for lookup
+
+    def preprocess_tasks(self, all_tasks: dict[str, TaskDefinition]) -> None:
+        """Pre-scan all tasks to identify parallel branch tasks.
+
+        This must be called before add_task() to properly handle parallel branches.
+
+        Args:
+            all_tasks: All task definitions in the workflow
+        """
+        self._all_tasks = all_tasks
+
+        # Find all tasks that are branches of parallel operators
+        for task_def in all_tasks.values():
+            if task_def.task_type == TaskType.PARALLEL and task_def.branches:
+                for branch_task in task_def.branches:
+                    self._parallel_branch_tasks.add(branch_task)
 
     def add_task(self, task_def: TaskDefinition) -> None:
         """Add a task to the workflow based on its type.
@@ -53,6 +71,13 @@ class DriverWorkflowBuilder:
         Raises:
             WorkflowBuildError: If task type is not supported
         """
+        # Store for lookup (needed for parallel branch building)
+        self._all_tasks[task_def.name] = task_def
+
+        # Skip tasks that are inside parallel branches (they'll be added by _add_parallel)
+        if task_def.name in self._parallel_branch_tasks:
+            return
+
         handlers = {
             TaskType.SHELL: self._add_shell,
             TaskType.PYTHON: self._add_python,
@@ -63,6 +88,7 @@ class DriverWorkflowBuilder:
             TaskType.WHILE: self._add_while,
             TaskType.EMIT: self._add_emit,
             TaskType.WAIT_FOR: self._add_wait_for,
+            TaskType.PARALLEL: self._add_parallel,
         }
 
         handler = handlers.get(task_def.task_type)
@@ -79,7 +105,7 @@ class DriverWorkflowBuilder:
             Workflow definition as JSON-serializable dict
         """
         workflow = self._builder.build()
-        return workflow.model_dump(mode="json")
+        return cast(dict[str, Any], workflow.model_dump(mode="json"))
 
     def build_workflow(self) -> Workflow:
         """Build and return workflow object.
@@ -318,6 +344,93 @@ class DriverWorkflowBuilder:
             **kwargs,
         )
 
+    def _add_parallel(self, task_def: TaskDefinition) -> None:
+        """Add a parallel execution task."""
+        if not task_def.branches:
+            raise WorkflowBuildError(
+                f"Parallel task '{task_def.name}' requires branches parameter"
+            )
+
+        # Build branch functions for each branch task
+        branches: dict[str, Any] = {}
+
+        for branch_name in task_def.branches:
+            branch_task_def = self._all_tasks.get(branch_name)
+            if not branch_task_def:
+                raise WorkflowBuildError(
+                    f"Parallel task '{task_def.name}' references unknown branch task "
+                    f"'{branch_name}'. Make sure the task is defined before parallel()."
+                )
+
+            # Create a branch builder function that adds this task
+            # We need to capture branch_task_def in closure properly
+            def make_branch_builder(btd: TaskDefinition) -> Any:
+                def branch_builder(b: WorkflowBuilder) -> WorkflowBuilder:
+                    # Build the task based on its type
+                    if btd.task_type == TaskType.SHELL:
+                        command = btd.func()
+                        b.task(
+                            btd.name,
+                            "tools.shell.run",
+                            args=[command],
+                            dependencies=[],
+                            result_key=btd.get_result_key(),
+                        )
+                    elif btd.task_type == TaskType.PYTHON:
+                        code = self._generate_python_code(btd)
+                        b.task(
+                            btd.name,
+                            "tools.code.exec",
+                            kwargs={"code": code},
+                            dependencies=[],
+                            result_key=btd.get_result_key(),
+                        )
+                    elif btd.task_type == TaskType.HTTP:
+                        config = btd.func()
+                        kwargs: dict[str, Any] = {"url": config.get("url")}
+                        if "method" in config:
+                            kwargs["method"] = config["method"]
+                        if "headers" in config:
+                            kwargs["headers"] = config["headers"]
+                        if "body" in config:
+                            kwargs["body"] = config["body"]
+                        b.task(
+                            btd.name,
+                            "tools.http.request",
+                            kwargs=kwargs,
+                            dependencies=[],
+                            result_key=btd.get_result_key(),
+                        )
+                    elif btd.task_type == TaskType.TOOL:
+                        result = btd.func()
+                        args: list[Any] = []
+                        task_kwargs: dict[str, Any] = {}
+                        if isinstance(result, dict):
+                            task_kwargs = result
+                        elif isinstance(result, (list, tuple)):
+                            args = list(result)
+                        elif result is not None:
+                            args = [result]
+                        b.task(
+                            btd.name,
+                            btd.tool_name or "",
+                            args=args,
+                            kwargs=task_kwargs,
+                            dependencies=[],
+                            result_key=btd.get_result_key(),
+                        )
+                    return b
+
+                return branch_builder
+
+            branches[branch_name] = make_branch_builder(branch_task_def)
+
+        self._builder.parallel(
+            task_def.name,
+            branches=branches,
+            dependencies=task_def.depends or [],
+        )
+
     def _apply_policies(self, task_def: TaskDefinition) -> None:
         """Apply retry, timeout, and delay policies to current task."""
         # Apply retry policy
@@ -372,7 +485,7 @@ class DriverWorkflowBuilder:
         lines = source.split("\n")
 
         # Find the function definition line and extract body
-        body_lines = []
+        body_lines: list[str] = []
         in_function = False
         in_docstring = False
         docstring_quote = None
@@ -393,7 +506,7 @@ class DriverWorkflowBuilder:
             if in_function:
                 # Handle docstrings at the start of function
                 if in_docstring:
-                    if docstring_quote in stripped:
+                    if docstring_quote is not None and docstring_quote in stripped:
                         in_docstring = False
                     continue
 

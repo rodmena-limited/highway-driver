@@ -29,6 +29,7 @@ import ast
 import inspect
 import textwrap
 from collections.abc import Callable
+from typing import Any
 
 
 class DurableSleepTransformer(ast.NodeTransformer):
@@ -131,7 +132,7 @@ class DurableSleepTransformer(ast.NodeTransformer):
 
 
 def transform_function_for_durability(
-    func: Callable,
+    func: Callable[..., Any],
     apply_sleep_transform: bool = True,
 ) -> str:
     """Transform a function's source code for durable execution.

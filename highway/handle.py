@@ -15,13 +15,17 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
+from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
 from highway.result import WorkflowResult
 
 if TYPE_CHECKING:
     from highway.driver import Driver
+
+logger = logging.getLogger(__name__)
 
 
 class _LazyResult:
@@ -75,6 +79,9 @@ class WorkflowHandle:
 
     # Descriptor for lazy-loaded result
     result = _LazyResult()
+
+    # Cache for workflow result (used by descriptor)
+    _cached_result: WorkflowResult
 
     def __init__(
         self,
@@ -152,23 +159,37 @@ class WorkflowHandle:
         start_time = time.time()
         poll_interval = 0.1  # Start with 100ms
         max_interval = 5.0  # Max 5 seconds between polls
+        logger.debug("Polling workflow %s (timeout=%ds)", self._run_id, timeout)
 
         while True:
             status = self._driver.status(self._run_id)
 
             if status.state.is_terminal():
+                elapsed = time.time() - start_time
+                logger.info(
+                    "Workflow %s completed (state=%s, elapsed=%.1fs)",
+                    self._run_id,
+                    status.state.value,
+                    elapsed,
+                )
                 return status
 
             elapsed = time.time() - start_time
             if elapsed >= timeout:
                 # Return current status even if not terminal
+                logger.warning(
+                    "Workflow %s polling timed out after %.1fs (state=%s)",
+                    self._run_id,
+                    elapsed,
+                    status.state.value,
+                )
                 return status
 
             # Exponential backoff
             time.sleep(poll_interval)
             poll_interval = min(poll_interval * 1.5, max_interval)
 
-    def __await__(self):
+    def __await__(self) -> Generator[Any, None, WorkflowResult]:
         """Make WorkflowHandle awaitable.
 
         Allows: result = await handle
@@ -193,16 +214,30 @@ class WorkflowHandle:
         start_time = time.time()
         poll_interval = 0.1
         max_interval = 5.0
+        logger.debug("Async polling workflow %s (timeout=%ds)", self._run_id, timeout)
 
         while True:
             # TODO: Use async status when available
             status = self._driver.status(self._run_id)
 
             if status.state.is_terminal():
+                elapsed = time.time() - start_time
+                logger.info(
+                    "Workflow %s completed async (state=%s, elapsed=%.1fs)",
+                    self._run_id,
+                    status.state.value,
+                    elapsed,
+                )
                 return status
 
             elapsed = time.time() - start_time
             if elapsed >= timeout:
+                logger.warning(
+                    "Workflow %s async polling timed out after %.1fs (state=%s)",
+                    self._run_id,
+                    elapsed,
+                    status.state.value,
+                )
                 return status
 
             await asyncio.sleep(poll_interval)
@@ -212,6 +247,7 @@ class WorkflowHandle:
         """String representation."""
         try:
             state = self.status.state.value
-        except Exception:
+        except (AttributeError, KeyError, ValueError, TypeError):
+            # Handle cases where status is unavailable or malformed
             state = "unknown"
         return f"<WorkflowHandle run_id={self._run_id!r} state={state!r}>"

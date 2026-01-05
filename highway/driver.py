@@ -11,7 +11,10 @@ import os
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from highway.handle import WorkflowHandle
 
 from highway.ast_utils import FunctionAnalyzer
 from highway.builder import DriverWorkflowBuilder
@@ -59,7 +62,7 @@ class Driver:
         print(result.status)  # "completed"
 
     Attributes:
-        api_key: Highway API key for authentication
+        api_key: Highway API key for authentication (read-only property)
         endpoint: Highway API endpoint URL
         tasks: Registered task definitions
     """
@@ -85,11 +88,30 @@ class Driver:
             driver = Driver()  # Auto: 'workflow_<first_task>' or 'driver_workflow_<uuid>'
         """
         self._name = name
-        self.api_key = api_key or os.environ.get("HIGHWAY_API_KEY", "")
-        self.endpoint = endpoint or os.environ.get("HIGHWAY_API_ENDPOINT", "https://highway.run")
+        self._api_key = api_key or os.environ.get("HIGHWAY_API_KEY", "")
+        self._endpoint = endpoint or os.environ.get("HIGHWAY_API_ENDPOINT", "https://highway.run")
         self._tasks: dict[str, TaskDefinition] = {}
         self._analyzer = FunctionAnalyzer()
         self._runner: StabilizeRunner | None = None
+
+    @property
+    def api_key(self) -> str:
+        """Get API key (read-only to prevent accidental exposure)."""
+        return self._api_key
+
+    @property
+    def endpoint(self) -> str:
+        """Get API endpoint URL."""
+        return self._endpoint
+
+    def __repr__(self) -> str:
+        """String representation (excludes credentials for security)."""
+        task_count = len(self._tasks)
+        return f"<Driver name={self._name!r} endpoint={self._endpoint!r} tasks={task_count}>"
+
+    def __str__(self) -> str:
+        """Human-readable representation (excludes credentials)."""
+        return self.__repr__()
 
     @property
     def tasks(self) -> dict[str, TaskDefinition]:
@@ -402,7 +424,10 @@ class Driver:
             def init():
                 return {"counter": 0, "limit": 5}
 
-            @driver.while_loop(condition="{{init_result.counter}} < {{init_result.limit}}", depends=["init"])
+            @driver.while_loop(
+                condition="{{init_result.counter}} < {{init_result.limit}}",
+                depends=["init"]
+            )
             def increment():
                 return "echo 'Iteration'"
         """
@@ -434,6 +459,72 @@ class Driver:
 
         return decorator
 
+    def parallel(
+        self,
+        name: str,
+        branches: list[str],
+        depends: list[str] | None = None,
+        timeout: int = 300,
+    ) -> None:
+        """Define a parallel execution group for multiple tasks.
+
+        Creates a ParallelOperator that runs the specified tasks concurrently.
+        Other tasks can depend on this parallel group to wait for all branches
+        to complete.
+
+        Args:
+            name: Name for the parallel group (used for dependencies)
+            branches: List of task names to run in parallel
+            depends: List of task names this parallel group depends on
+            timeout: Execution timeout in seconds for all branches
+
+        Raises:
+            TaskDefinitionError: If name already registered or branches invalid
+
+        Example:
+            @driver.task(py=True)
+            def fetch_users():
+                return {"users": ["alice", "bob"]}
+
+            @driver.task(py=True)
+            def fetch_orders():
+                return {"orders": [1, 2, 3]}
+
+            # Run both tasks in parallel
+            driver.parallel("fetch_data", branches=["fetch_users", "fetch_orders"])
+
+            # Wait for parallel group to complete
+            @driver.task(shell=True, depends=["fetch_data"])
+            def notify():
+                return "echo 'All data fetched!'"
+        """
+        if name in self._tasks:
+            raise TaskDefinitionError(f"Task '{name}' is already registered")
+
+        if not branches:
+            raise TaskDefinitionError("parallel() requires at least one branch")
+
+        # Create a dummy function for the parallel operator
+        def parallel_marker() -> None:
+            pass
+
+        task_def = TaskDefinition(
+            name=name,
+            func=parallel_marker,
+            task_type=TaskType.PARALLEL,
+            depends=depends or [],
+            timeout=timeout,
+            branches=branches,
+        )
+
+        self._tasks[name] = task_def
+        logger.info(
+            "Registered parallel '%s' (branches=%s, depends=%s)",
+            name,
+            branches,
+            depends or [],
+        )
+
     def emit(
         self,
         event: str,
@@ -455,7 +546,11 @@ class Driver:
             def setup():
                 return {"workflow_id": "123"}
 
-            @driver.emit(event="workflow_ready", payload={"id": "{{setup_result.workflow_id}}"}, depends=["setup"])
+            @driver.emit(
+                event="workflow_ready",
+                payload={"id": "{{setup_result.workflow_id}}"},
+                depends=["setup"]
+            )
             def signal_ready():
                 pass  # Marker function - actual emission handled by Highway
         """
@@ -583,6 +678,9 @@ class Driver:
         workflow_name = self._get_workflow_name()
         builder = DriverWorkflowBuilder(workflow_name, version="1.0.0")
 
+        # Preprocess to identify parallel branch tasks
+        builder.preprocess_tasks(self._tasks)
+
         for task_def in self._tasks.values():
             builder.add_task(task_def)
 
@@ -624,11 +722,12 @@ class Driver:
             )
 
         except TimeoutError as e:
+            # Report timeout accurately - don't mask it as "running"
             return WorkflowResult(
                 run_id=exec_id,
-                status="running",
-                state=WorkflowState.RUNNING,
-                error=str(e),
+                status="timed_out",
+                state=WorkflowState.TIMED_OUT,
+                error=f"Workflow did not complete within {timeout}s: {e}",
                 tasks={},
             )
 
@@ -781,6 +880,8 @@ class Driver:
         from highway.handle import WorkflowHandle
 
         result = self.run(wait=False, timeout=timeout, workflow_id=workflow_id, inputs=inputs)
+        if result.run_id is None:
+            raise ExecutionError("Failed to start workflow: no run_id returned")
         return WorkflowHandle(run_id=result.run_id, driver=self, timeout=timeout)
 
     def retrieve_workflow(self, run_id: str, timeout: float = 300) -> WorkflowHandle:
@@ -839,11 +940,12 @@ class Driver:
         Returns:
             Dict mapping task name to (package_path, entrypoint)
         """
-        return {
-            t.name: (t.package, t.entrypoint)
-            for t in self._tasks.values()
-            if t.durable and t.package
-        }
+        result: dict[str, tuple[str, str]] = {}
+        for t in self._tasks.values():
+            # Validation in TaskDefinition ensures entrypoint is set when package is set
+            if t.durable and t.package and t.entrypoint:
+                result[t.name] = (t.package, t.entrypoint)
+        return result
 
     def _build_workflow(
         self,
@@ -864,6 +966,9 @@ class Driver:
         """
         workflow_name = self._get_workflow_name()
         builder = DriverWorkflowBuilder(workflow_name, version="1.0.0")
+
+        # Preprocess to identify parallel branch tasks
+        builder.preprocess_tasks(self._tasks)
 
         for task_def in self._tasks.values():
             builder.add_task(task_def)

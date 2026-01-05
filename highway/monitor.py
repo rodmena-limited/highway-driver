@@ -141,7 +141,8 @@ class WorkflowMonitor:
         """
         try:
             workflow = self._store.retrieve(execution_id)
-        except Exception:
+        except (KeyError, ValueError, LookupError):
+            # Workflow not found in store
             return None
 
         # Extract outputs from the highway stage

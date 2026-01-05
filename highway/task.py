@@ -29,6 +29,7 @@ class TaskType(Enum):
     WHILE = "while"  # While loop with condition
     EMIT = "emit"  # Emit event
     WAIT_FOR = "wait_for"  # Wait for event
+    PARALLEL = "parallel"  # Parallel execution of branches
 
 
 @dataclass
@@ -74,6 +75,8 @@ class TaskDefinition:
     event_name: str | None = None  # Emit/WaitFor: event name
     event_payload: dict[str, Any] | None = None  # Emit: event payload
     event_timeout: int | None = None  # WaitFor: timeout in seconds
+    # Parallel execution fields
+    branches: list[str] | None = None  # Parallel: list of task names to run in parallel
     # Durable Python execution fields (tools.python.run)
     durable: bool = False  # Use tools.python.run with DurableContext
     package: str | None = None  # Path to Python package directory
@@ -84,9 +87,9 @@ class TaskDefinition:
     def __post_init__(self) -> None:
         """Validate task definition after creation."""
         if self.timeout <= 0:
-            raise ValueError("timeout must be positive, got %d" % self.timeout)
+            raise ValueError(f"timeout must be positive, got {self.timeout}")
         if self.retries < 0:
-            raise ValueError("retries must be non-negative, got %d" % self.retries)
+            raise ValueError(f"retries must be non-negative, got {self.retries}")
         if self.retry_delay < 0:
             raise ValueError(f"retry_delay must be non-negative, got {self.retry_delay}")
         if self.backoff_rate < 1.0:
@@ -120,7 +123,5 @@ class TaskDefinition:
         errors = []
         for dep in self.depends:
             if dep not in available_tasks:
-                errors.append(
-                    f"Task '{self.name}' depends on '{dep}' which is not registered"
-                )
+                errors.append(f"Task '{self.name}' depends on '{dep}' which is not registered")
         return errors

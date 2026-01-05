@@ -49,6 +49,41 @@ class PackagedArtifact:
     entrypoint: str  # Module:function (e.g., "main:run_calculation")
 
 
+def _create_secure_tempfile() -> str:
+    """Create a temporary file with restricted permissions.
+
+    Creates temp file atomically via mkstemp with owner-only permissions (0o600).
+    Caller is responsible for cleanup via cleanup_artifact() or os.unlink().
+
+    Returns:
+        Path to the temporary file
+
+    Note:
+        Permissions are set immediately after creation to minimize
+        the window where file has default permissions.
+    """
+    fd, path = tempfile.mkstemp(suffix=".zip", prefix="driver_tasks_")
+    try:
+        os.chmod(path, 0o600)  # Owner read/write only (before closing fd)
+    finally:
+        os.close(fd)
+    logger.debug("Created secure temp file: %s", path)
+    return path
+
+
+def _cleanup_tempfile(path: str) -> None:
+    """Clean up a temporary file, logging any failures.
+
+    Args:
+        path: Path to the temporary file
+    """
+    try:
+        os.unlink(path)
+        logger.debug("Cleaned up temp file: %s", path)
+    except OSError as e:
+        logger.warning("Failed to cleanup temp file %s: %s", path, e)
+
+
 def package_directory(
     source_dir: str,
     entrypoint: str,
@@ -82,66 +117,70 @@ def package_directory(
     if package_name is None:
         package_name = original_package_name
 
-    # Create temp file for ZIP
-    fd, zip_path = tempfile.mkstemp(suffix=".zip", prefix="driver_tasks_")
-    os.close(fd)
+    # Create temp file for ZIP with restricted permissions
+    zip_path = _create_secure_tempfile()
 
     hasher = hashlib.sha256()
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # Walk source directory and add all .py files
-        for root, dirs, files in os.walk(source_dir):
-            # Filter out __pycache__ and hidden directories
-            dirs[:] = [d for d in dirs if not d.startswith((".", "__pycache__"))]
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Walk source directory and add all .py files
+            for root, dirs, files in os.walk(source_dir):
+                # Filter out __pycache__ and hidden directories
+                dirs[:] = [d for d in dirs if not d.startswith((".", "__pycache__"))]
 
-            for filename in files:
-                if not filename.endswith(".py"):
-                    continue
+                for filename in files:
+                    if not filename.endswith(".py"):
+                        continue
 
-                file_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(file_path, source_dir)
+                    file_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(file_path, source_dir)
 
-                # Create archive path under package_name
-                archive_path = os.path.join(package_name, rel_path)
+                    # Create archive path under package_name
+                    archive_path = os.path.join(package_name, rel_path)
 
-                # Read content
-                with open(file_path, "rb") as f:
-                    content = f.read()
+                    # Read content
+                    with open(file_path, "rb") as f:
+                        content = f.read()
 
-                # Rewrite imports if package name differs
-                if original_package_name != package_name:
-                    content = _rewrite_imports(
-                        content.decode("utf-8"),
-                        original_package_name,
-                        package_name,
-                    ).encode("utf-8")
+                    # Rewrite imports if package name differs
+                    if original_package_name != package_name:
+                        content = _rewrite_imports(
+                            content.decode("utf-8"),
+                            original_package_name,
+                            package_name,
+                        ).encode("utf-8")
 
-                hasher.update(content)
-                zf.writestr(archive_path, content)
+                    hasher.update(content)
+                    zf.writestr(archive_path, content)
 
-        # Ensure __init__.py exists at package root
-        root_init = os.path.join(package_name, "__init__.py")
-        if root_init not in zf.namelist():
-            init_content = b'"""Auto-generated package init."""\n'
-            zf.writestr(root_init, init_content)
-            hasher.update(init_content)
+            # Ensure __init__.py exists at package root
+            root_init = os.path.join(package_name, "__init__.py")
+            if root_init not in zf.namelist():
+                init_content = b'"""Auto-generated package init."""\n'
+                zf.writestr(root_init, init_content)
+                hasher.update(init_content)
 
-        # Add highway_context.py for get_context() support
-        context_path = os.path.join(package_name, "highway_context.py")
-        if context_path not in zf.namelist():
-            context_content = _get_highway_context_module().encode("utf-8")
-            zf.writestr(context_path, context_content)
-            hasher.update(context_content)
-            logger.debug("Added highway_context.py to package artifact")
+            # Add highway_context.py for get_context() support
+            context_path = os.path.join(package_name, "highway_context.py")
+            if context_path not in zf.namelist():
+                context_content = _get_highway_context_module().encode("utf-8")
+                zf.writestr(context_path, context_content)
+                hasher.update(context_content)
+                logger.debug("Added highway_context.py to package artifact")
 
-    content_hash = hasher.hexdigest()
+        content_hash = hasher.hexdigest()
 
-    return PackagedArtifact(
-        file_path=zip_path,
-        content_hash=content_hash,
-        package_name=package_name,
-        entrypoint=entrypoint,
-    )
+        return PackagedArtifact(
+            file_path=zip_path,
+            content_hash=content_hash,
+            package_name=package_name,
+            entrypoint=entrypoint,
+        )
+    except Exception:
+        # Clean up temp file on any error
+        _cleanup_tempfile(zip_path)
+        raise
 
 
 def package_functions(
@@ -181,43 +220,47 @@ def package_functions(
     # Get highway_context.py content
     context_content = _get_highway_context_module()
 
-    # Create temp file for ZIP
-    fd, zip_path = tempfile.mkstemp(suffix=".zip", prefix="driver_tasks_")
-    os.close(fd)
+    # Create temp file for ZIP with restricted permissions
+    zip_path = _create_secure_tempfile()
 
     hasher = hashlib.sha256()
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # Add __init__.py
-        init_content = '"""Auto-generated package init."""\n'
-        init_bytes = init_content.encode("utf-8")
-        zf.writestr(os.path.join(package_name, "__init__.py"), init_bytes)
-        hasher.update(init_bytes)
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Add __init__.py
+            init_content = '"""Auto-generated package init."""\n'
+            init_bytes = init_content.encode("utf-8")
+            zf.writestr(os.path.join(package_name, "__init__.py"), init_bytes)
+            hasher.update(init_bytes)
 
-        # Add highway_context.py for get_context() access
-        context_bytes = context_content.encode("utf-8")
-        zf.writestr(os.path.join(package_name, "highway_context.py"), context_bytes)
-        hasher.update(context_bytes)
-        logger.debug("Added highway_context.py to artifact")
+            # Add highway_context.py for get_context() access
+            context_bytes = context_content.encode("utf-8")
+            zf.writestr(os.path.join(package_name, "highway_context.py"), context_bytes)
+            hasher.update(context_bytes)
+            logger.debug("Added highway_context.py to artifact")
 
-        # Add tasks.py with all functions and wrappers
-        tasks_bytes = tasks_content.encode("utf-8")
-        zf.writestr(os.path.join(package_name, "tasks.py"), tasks_bytes)
-        hasher.update(tasks_bytes)
+            # Add tasks.py with all functions and wrappers
+            tasks_bytes = tasks_content.encode("utf-8")
+            zf.writestr(os.path.join(package_name, "tasks.py"), tasks_bytes)
+            hasher.update(tasks_bytes)
 
-    content_hash = hasher.hexdigest()
+        content_hash = hasher.hexdigest()
 
-    # Entrypoint uses wrapper function (_hw_<func_name>)
-    first_func = next(iter(functions.keys()))
+        # Entrypoint uses wrapper function (_hw_<func_name>)
+        first_func = next(iter(functions.keys()))
 
-    logger.info("Created artifact: %s (hash=%s)", zip_path, content_hash[:16])
+        logger.info("Created artifact: %s (hash=%s)", zip_path, content_hash[:16])
 
-    return PackagedArtifact(
-        file_path=zip_path,
-        content_hash=content_hash,
-        package_name=package_name,
-        entrypoint=f"tasks:_hw_{first_func}",  # Wrapper function
-    )
+        return PackagedArtifact(
+            file_path=zip_path,
+            content_hash=content_hash,
+            package_name=package_name,
+            entrypoint=f"tasks:_hw_{first_func}",  # Wrapper function
+        )
+    except Exception:
+        # Clean up temp file on any error
+        _cleanup_tempfile(zip_path)
+        raise
 
 
 def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
@@ -334,8 +377,11 @@ def _generate_wrapper(func_name: str) -> str:
 def _get_highway_context_module() -> str:
     """Return content for highway_context.py module.
 
-    This module provides thread-local context access for user code
-    that doesn't accept ctx as a parameter.
+    This module provides context access for user code that doesn't
+    accept ctx as a parameter.
+
+    Uses contextvars.ContextVar which is safe for both sync and async code,
+    unlike threading.local() which breaks in asyncio/gevent contexts.
 
     Returns:
         Python source code for highway_context.py
@@ -345,6 +391,9 @@ def _get_highway_context_module() -> str:
 This module provides get_context() for accessing the current
 DurableContext from within a Highway task, without requiring
 ctx as a function parameter.
+
+Uses contextvars.ContextVar for thread-safe AND async-safe context storage.
+This works correctly with asyncio, gevent, and other async frameworks.
 
 Usage:
     from highway_context import get_context
@@ -356,9 +405,11 @@ Usage:
         return {"order_id": order_id}
 """
 
-import threading
+from contextvars import ContextVar
+from typing import Any
 
-_thread_local = threading.local()
+# Use ContextVar instead of threading.local() for async-safe context
+_context_var: ContextVar[Any] = ContextVar('highway_ctx', default=None)
 
 
 def get_context():
@@ -370,7 +421,7 @@ def get_context():
     Raises:
         RuntimeError: If called outside a Highway task execution
     """
-    ctx = getattr(_thread_local, 'ctx', None)
+    ctx = _context_var.get()
     if ctx is None:
         raise RuntimeError(
             "get_context() called outside Highway task execution. "
@@ -380,13 +431,19 @@ def get_context():
 
 
 def _set_context(ctx):
-    """Set the thread-local context (called by wrapper)."""
-    _thread_local.ctx = ctx
+    """Set the context (called by wrapper).
+
+    Safe for both sync and async code.
+    """
+    _context_var.set(ctx)
 
 
 def _clear_context():
-    """Clear the thread-local context (called by wrapper)."""
-    _thread_local.ctx = None
+    """Clear the context (called by wrapper).
+
+    Safe for both sync and async code.
+    """
+    _context_var.set(None)
 '''
 
 
@@ -544,9 +601,9 @@ def cleanup_artifact(artifact: PackagedArtifact) -> None:
 
     Args:
         artifact: PackagedArtifact to clean up
+
+    Note:
+        Logs a warning if cleanup fails instead of silently ignoring errors.
     """
     if artifact.file_path and os.path.exists(artifact.file_path):
-        try:
-            os.unlink(artifact.file_path)
-        except OSError:
-            pass  # Ignore cleanup errors
+        _cleanup_tempfile(artifact.file_path)

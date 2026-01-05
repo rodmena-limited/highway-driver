@@ -15,6 +15,7 @@ from __future__ import annotations
 # Use simple argparse to avoid adding click dependency
 import argparse
 import sys
+from typing import cast
 
 
 def list_workflows(args: argparse.Namespace) -> int:
@@ -179,7 +180,7 @@ def main() -> int:
         parser.print_help()
         return 0
 
-    return args.func(args)
+    return cast(int, args.func(args))
 
 
 if __name__ == "__main__":

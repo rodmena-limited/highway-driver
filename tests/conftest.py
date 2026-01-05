@@ -8,10 +8,10 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-# Load .env file for API credentials
+# Load .env file for API credentials (must be before importing Driver)
 load_dotenv()
 
-from highway import Driver
+from highway import Driver  # noqa: E402
 
 
 def pytest_configure(config):

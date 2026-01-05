@@ -8,8 +8,6 @@ Tests that AST decorator stripping works correctly with:
 - Complex data structures
 """
 
-from datetime import UTC
-
 from highway import Driver
 
 driver = Driver()
@@ -24,7 +22,7 @@ def analyze_system():
     import sys
     from collections import Counter
     from dataclasses import dataclass
-    from datetime import datetime
+    from datetime import UTC, datetime
     from functools import reduce
 
     @dataclass
@@ -117,15 +115,10 @@ if __name__ == "__main__":
         for task_name, task_result in result.tasks.items():
             print(f"\n=== {task_name} ===")
             if task_result.result:
-                stdout = task_result.result.get("stdout", "")
-                stderr = task_result.result.get("stderr", "")
+                data = task_result.result
 
-                if "__HIGHWAY_RESULT__:" in stdout:
-                    import json
-
-                    json_str = stdout.split("__HIGHWAY_RESULT__:")[1].strip()
-                    data = json.loads(json_str)
-
+                # Check if this is the expected structured result
+                if "system" in data and "calculations" in data:
                     print("\nSystem Info:")
                     print(f"  Python: {data['system']['python_version']}")
                     print(
@@ -141,11 +134,8 @@ if __name__ == "__main__":
                     print(f"  Primes <50: {data['calculations']['primes_under_50']}")
 
                     print(f"\nHash demo: {data['hash_demo']}")
-                elif stdout:
-                    print(f"Stdout: {stdout[:500]}")
-
-                if stderr:
-                    print(f"Stderr: {stderr[:500]}")
+                else:
+                    print(f"Result: {data}")
 
             if task_result.error:
                 print(f"Error: {task_result.error}")

@@ -6,9 +6,12 @@ Uses contextvars for thread-safe context management.
 
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -119,6 +122,12 @@ def set_context(
         attempt=attempt,
         outputs=outputs,
     )
+    logger.debug(
+        "Set context: workflow_id=%s, task_name=%s, attempt=%d",
+        workflow_id,
+        task_name,
+        attempt,
+    )
     return _context.set(ctx)
 
 
@@ -128,4 +137,5 @@ def reset_context(token: Any) -> None:
     Args:
         token: Token from set_context
     """
+    logger.debug("Reset context")
     _context.reset(token)

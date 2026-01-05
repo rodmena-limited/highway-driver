@@ -63,7 +63,9 @@ def main():
             print("Tasks:")
             for task_name, task_result in status.tasks.items():
                 print(
-                    "  - {}: {}".format(task_name, task_result.state.value if task_result.state else "pending")
+                    "  - {}: {}".format(
+                        task_name, task_result.state.value if task_result.state else "pending"
+                    )
                 )
 
 

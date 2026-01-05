@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from stabilize import (
     CompleteStageHandler,
@@ -185,7 +185,7 @@ class StabilizeRunner:
         self._orchestrator.start(workflow)
 
         logger.info("Submitted workflow %s (execution_id=%s)", name, workflow.id)
-        return workflow.id
+        return cast(str, workflow.id)
 
     def wait(
         self,
@@ -207,6 +207,7 @@ class StabilizeRunner:
             TimeoutError: If workflow doesn't complete within timeout
         """
         start_time = time.time()
+        logger.debug("Waiting for workflow %s (timeout=%ds)", execution_id, timeout)
 
         while time.time() - start_time < timeout:
             # Process pending messages (this advances the workflow)
@@ -215,10 +216,18 @@ class StabilizeRunner:
             # Check status
             result = self.status(execution_id)
             if result.get("is_complete"):
+                elapsed = time.time() - start_time
+                logger.info(
+                    "Workflow %s completed (status=%s, elapsed=%.1fs)",
+                    execution_id,
+                    result.get("status"),
+                    elapsed,
+                )
                 return result
 
             time.sleep(poll_interval)
 
+        logger.warning("Workflow %s timed out after %ds", execution_id, timeout)
         raise TimeoutError(f"Workflow {execution_id} did not complete within {timeout}s")
 
     def status(self, execution_id: str, process_pending: bool = True) -> dict[str, Any]:
