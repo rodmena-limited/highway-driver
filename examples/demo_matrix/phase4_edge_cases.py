@@ -40,10 +40,10 @@ def test_empty_foreach() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
     # ForEach on empty list behavior may vary
-    print("Result: %s (empty foreach behavior documented)\n" % result.status)
+    print(f"Result: {result.status} (empty foreach behavior documented)\n")
 
 
 def test_null_variable() -> None:
@@ -71,9 +71,9 @@ def test_null_variable() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Null variable handled gracefully\n")
 
 
@@ -84,21 +84,7 @@ def test_deep_path_resolution() -> None:
     @driver.task(py=True)
     def setup_deep():
         # Create deeply nested structure
-        return {
-            "a": {
-                "b": {
-                    "c": [
-                        {
-                            "d": {
-                                "e": {
-                                    "f": "deeply_nested_value"
-                                }
-                            }
-                        }
-                    ]
-                }
-            }
-        }
+        return {"a": {"b": {"c": [{"d": {"e": {"f": "deeply_nested_value"}}}]}}}
 
     @driver.task(py=True, depends=["setup_deep"])
     def resolve_paths():
@@ -111,9 +97,9 @@ def test_deep_path_resolution() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Deep path resolution completed\n")
 
 
@@ -137,9 +123,9 @@ def test_chunked_large_result() -> None:
 
     result = driver.run(wait=True, timeout=90)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Large result handled (1050 items)\n")
 
 
@@ -166,7 +152,7 @@ def test_while_zero_iterations() -> None:
         # Using result path - but while condition re-evaluates on each iteration
         # and would need mutable {{counter}} variable
         condition="{{init_false_condition_result.counter}} < {{init_false_condition_result.limit}}",
-        depends=["init_false_condition"]
+        depends=["init_false_condition"],
     )
     def while_body():
         return {"iteration": "executed"}
@@ -181,9 +167,9 @@ def test_while_zero_iterations() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    print("Result: %s (while_loop limitation documented)\n" % result.status)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    print(f"Result: {result.status} (while_loop limitation documented)\n")
 
 
 def test_simple_foreach() -> None:
@@ -208,10 +194,10 @@ def test_simple_foreach() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
     # ForEach behavior documented
-    print("Result: %s (foreach behavior documented)\n" % result.status)
+    print(f"Result: {result.status} (foreach behavior documented)\n")
 
 
 def run_all() -> None:

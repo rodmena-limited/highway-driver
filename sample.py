@@ -40,6 +40,7 @@ def echo_file():
 if __name__ == "__main__":
     # Clean up stale database
     import os
+
     if os.path.exists(".stabilize.db"):
         os.remove(".stabilize.db")
 

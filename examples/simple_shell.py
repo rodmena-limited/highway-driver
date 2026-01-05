@@ -19,22 +19,22 @@ def main() -> None:
         return "echo 'Hello from Highway Driver SDK!'"
 
     print("Submitting to Highway via Stabilize...")
-    print("Endpoint: %s" % driver.endpoint)
+    print(f"Endpoint: {driver.endpoint}")
 
     result = driver.run(wait=True, timeout=60)
 
     print()
     print("Result:")
-    print("  Status: %s" % result.status)
-    print("  Run ID: %s" % result.run_id)
-    print("  Stabilize ID: %s" % result.stabilize_execution_id)
+    print(f"  Status: {result.status}")
+    print(f"  Run ID: {result.run_id}")
+    print(f"  Stabilize ID: {result.stabilize_execution_id}")
 
     # Get task output from highway_result
     for task_name, task_result in result.tasks.items():
         if task_result.result:
             stdout = task_result.result.get("stdout", "")
             if stdout:
-                print("  Output: %s" % stdout.strip())
+                print(f"  Output: {stdout.strip()}")
 
 
 if __name__ == "__main__":

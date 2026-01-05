@@ -4,7 +4,8 @@ This package provides a DBOS-style decorator interface for defining
 and executing workflows on Highway. It reduces workflow definition
 from 400+ lines to ~10 lines.
 
-Workflows are built using highway_dsl and submitted directly to the Highway API.
+Workflows are executed through Stabilize for durability, crash recovery,
+and local monitoring.
 
 Example:
     from highway import Driver
@@ -26,6 +27,13 @@ For non-blocking execution:
     result = driver.run(wait=False)
     print(result.run_id)  # Check status later
     status = driver.status(result.run_id)
+
+For local monitoring (no API calls):
+    from highway import WorkflowMonitor
+
+    monitor = WorkflowMonitor()
+    for wf in monitor.list_workflows():
+        print(f"{wf.execution_id} {wf.status}")
 """
 
 from highway.context import Context
@@ -40,6 +48,7 @@ from highway.exceptions import (
     WorkflowBuildError,
 )
 from highway.handle import WorkflowHandle
+from highway.monitor import WorkflowInfo, WorkflowMonitor
 from highway.result import (
     TaskResult,
     WorkflowResult,
@@ -55,6 +64,9 @@ __all__ = [
     "Driver",
     "Context",
     "WorkflowHandle",
+    # Monitoring
+    "WorkflowMonitor",
+    "WorkflowInfo",
     # Result types
     "WorkflowResult",
     "WorkflowStatus",

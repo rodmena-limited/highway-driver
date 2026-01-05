@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import inspect
 import textwrap
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from highway_dsl import Duration, WorkflowBuilder
@@ -68,9 +67,7 @@ class DriverWorkflowBuilder:
 
         handler = handlers.get(task_def.task_type)
         if not handler:
-            raise WorkflowBuildError(
-                f"Unsupported task type: {task_def.task_type.value}"
-            )
+            raise WorkflowBuildError(f"Unsupported task type: {task_def.task_type.value}")
 
         handler(task_def)
         self._added_tasks.add(task_def.name)
@@ -84,7 +81,7 @@ class DriverWorkflowBuilder:
         workflow = self._builder.build()
         return workflow.model_dump(mode="json")
 
-    def build_workflow(self) -> "Workflow":
+    def build_workflow(self) -> Workflow:
         """Build and return workflow object.
 
         Returns:
@@ -186,9 +183,7 @@ class DriverWorkflowBuilder:
     def _add_tool(self, task_def: TaskDefinition) -> None:
         """Add a generic Highway tool task."""
         if not task_def.tool_name:
-            raise WorkflowBuildError(
-                f"Task '{task_def.name}' is type TOOL but has no tool_name"
-            )
+            raise WorkflowBuildError(f"Task '{task_def.name}' is type TOOL but has no tool_name")
 
         # Get tool args/kwargs from function
         result = task_def.func()
@@ -243,9 +238,7 @@ class DriverWorkflowBuilder:
     def _add_foreach(self, task_def: TaskDefinition) -> None:
         """Add a ForEach loop task."""
         if not task_def.items:
-            raise WorkflowBuildError(
-                f"ForEach task '{task_def.name}' requires items parameter"
-            )
+            raise WorkflowBuildError(f"ForEach task '{task_def.name}' requires items parameter")
 
         # Get loop body command from function
         body_command = task_def.func()
@@ -270,9 +263,7 @@ class DriverWorkflowBuilder:
     def _add_while(self, task_def: TaskDefinition) -> None:
         """Add a While loop task."""
         if not task_def.condition:
-            raise WorkflowBuildError(
-                f"While task '{task_def.name}' requires condition parameter"
-            )
+            raise WorkflowBuildError(f"While task '{task_def.name}' requires condition parameter")
 
         # Get loop body command from function
         body_command = task_def.func()
@@ -296,9 +287,7 @@ class DriverWorkflowBuilder:
     def _add_emit(self, task_def: TaskDefinition) -> None:
         """Add an emit event task."""
         if not task_def.event_name:
-            raise WorkflowBuildError(
-                f"Emit task '{task_def.name}' requires event_name parameter"
-            )
+            raise WorkflowBuildError(f"Emit task '{task_def.name}' requires event_name parameter")
 
         kwargs: dict[str, Any] = {}
         if task_def.event_payload:
@@ -438,29 +427,24 @@ class DriverWorkflowBuilder:
         # Highway sandbox captures the variable named 'result' (lowercase)
         # Using intermediate variable because direct dict literal assignment doesn't work
         # Handle both "return value" and bare "return"
-        code = re.sub(
-            r'^(\s*)return\s+(.+)$',
-            r'\1result = \2',
-            code,
-            flags=re.MULTILINE
-        )
-        code = re.sub(r'^(\s*)return\s*$', r'\1result = None', code, flags=re.MULTILINE)
+        code = re.sub(r"^(\s*)return\s+(.+)$", r"\1result = \2", code, flags=re.MULTILINE)
+        code = re.sub(r"^(\s*)return\s*$", r"\1result = None", code, flags=re.MULTILINE)
 
         # Detect and add required imports for standard library modules
         imports = []
-        if re.search(r'\btime\.', code):
+        if re.search(r"\btime\.", code):
             imports.append("import time")
-        if re.search(r'\bjson\.', code):
+        if re.search(r"\bjson\.", code):
             imports.append("import json")
-        if re.search(r'\bos\.', code):
+        if re.search(r"\bos\.", code):
             imports.append("import os")
-        if re.search(r'\bmath\.', code):
+        if re.search(r"\bmath\.", code):
             imports.append("import math")
-        if re.search(r'\brandom\.', code):
+        if re.search(r"\brandom\.", code):
             imports.append("import random")
-        if re.search(r'\bdatetime\.', code):
+        if re.search(r"\bdatetime\.", code):
             imports.append("import datetime")
-        if re.search(r'\bre\.', code):
+        if re.search(r"\bre\.", code):
             imports.append("import re")
 
         if imports:

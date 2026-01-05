@@ -38,9 +38,9 @@ def main() -> None:
     result = driver.run(wait=True, timeout=120)
 
     print()
-    print("Result: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    print("Stabilize ID: %s" % result.stabilize_execution_id)
+    print(f"Result: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    print(f"Stabilize ID: {result.stabilize_execution_id}")
 
 
 if __name__ == "__main__":

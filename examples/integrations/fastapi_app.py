@@ -72,17 +72,15 @@ class HighwayClient:
     def __init__(self, api_endpoint: str, api_key: str):
         self.api_endpoint = api_endpoint.rstrip("/")
         self.headers = {
-            "Authorization": "Bearer %s" % api_key,
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-    async def submit(
-        self, workflow_definition: dict, inputs: dict | None = None
-    ) -> dict:
+    async def submit(self, workflow_definition: dict, inputs: dict | None = None) -> dict:
         """Submit workflow (non-blocking)."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                "%s/api/v1/workflows" % self.api_endpoint,
+                f"{self.api_endpoint}/api/v1/workflows",
                 json={
                     "workflow_definition": workflow_definition,
                     "inputs": inputs or {},
@@ -96,7 +94,7 @@ class HighwayClient:
         """Get workflow status."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                "%s/api/v1/workflows/%s" % (self.api_endpoint, workflow_run_id),
+                f"{self.api_endpoint}/api/v1/workflows/{workflow_run_id}",
                 headers=self.headers,
             )
             response.raise_for_status()
@@ -106,7 +104,7 @@ class HighwayClient:
         """Cancel running workflow."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                "%s/api/v1/workflows/%s/cancel" % (self.api_endpoint, workflow_run_id),
+                f"{self.api_endpoint}/api/v1/workflows/{workflow_run_id}/cancel",
                 headers=self.headers,
             )
             response.raise_for_status()
@@ -122,16 +120,14 @@ class HighwayClient:
             if status.get("status") in ("completed", "failed", "cancelled"):
                 return status
             await asyncio.sleep(poll_interval)
-        raise TimeoutError(
-            "Workflow %s did not complete within %ss" % (workflow_run_id, timeout)
-        )
+        raise TimeoutError(f"Workflow {workflow_run_id} did not complete within {timeout}s")
 
     async def stream_events(self, workflow_run_id: str):
         """Stream workflow events via SSE."""
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "GET",
-                "%s/api/v1/workflows/%s/stream" % (self.api_endpoint, workflow_run_id),
+                f"{self.api_endpoint}/api/v1/workflows/{workflow_run_id}/stream",
                 headers={**self.headers, "Accept": "text/event-stream"},
             ) as response:
                 response.raise_for_status()

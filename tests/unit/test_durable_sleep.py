@@ -9,8 +9,6 @@ import ast
 import time
 import zipfile
 
-import pytest
-
 from highway.artifact import package_functions
 from highway.transforms import (
     DurableSleepTransformer,
@@ -132,9 +130,7 @@ class TestTransformFunctionForDurability:
             time.sleep(5)
             return {"done": True}
 
-        result = transform_function_for_durability(
-            sample_task, apply_sleep_transform=False
-        )
+        result = transform_function_for_durability(sample_task, apply_sleep_transform=False)
         # Original time.sleep should be preserved (no transformation)
         assert "_durable_sleep" not in result
 

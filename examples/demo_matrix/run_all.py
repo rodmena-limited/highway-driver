@@ -80,7 +80,7 @@ def main() -> int:
     if failures:
         print("DEMO MATRIX SUMMARY: %d FAILURES" % len(failures))
         for phase, error in failures:
-            print("  - %s: %s" % (phase, error))
+            print(f"  - {phase}: {error}")
         print("=" * 70)
         return 1
     else:

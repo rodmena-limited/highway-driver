@@ -16,7 +16,7 @@ def format_result(operation: str, result: int | float) -> str:
     Returns:
         Formatted string
     """
-    return "Result of %s: %s" % (operation, result)
+    return f"Result of {operation}: {result}"
 
 
 def log_operation(operation: str, a: Any, b: Any, result: Any) -> dict[str, Any]:

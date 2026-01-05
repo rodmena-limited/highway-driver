@@ -16,12 +16,8 @@ from highway import Driver
 
 def pytest_configure(config):
     """Register custom markers."""
-    config.addinivalue_line(
-        "markers", "acceptance: marks tests as acceptance tests (require API)"
-    )
-    config.addinivalue_line(
-        "markers", "unit: marks tests as unit tests (no API required)"
-    )
+    config.addinivalue_line("markers", "acceptance: marks tests as acceptance tests (require API)")
+    config.addinivalue_line("markers", "unit: marks tests as unit tests (no API required)")
 
 
 @pytest.fixture

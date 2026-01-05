@@ -33,9 +33,9 @@ def test_long_task_95s() -> None:
 
     result = driver.run(wait=True, timeout=150)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Long task survived without connection death\n")
 
 
@@ -56,9 +56,9 @@ def test_activity_near_timeout() -> None:
 
     result = driver.run(wait=True, timeout=90)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Activity near timeout completed successfully\n")
 
 
@@ -70,30 +70,35 @@ def test_pool_stress() -> None:
     @driver.task(py=True)
     def branch_0():
         import time
+
         time.sleep(0.5)
         return {"branch": 0, "done": True}
 
     @driver.task(py=True)
     def branch_1():
         import time
+
         time.sleep(0.5)
         return {"branch": 1, "done": True}
 
     @driver.task(py=True)
     def branch_2():
         import time
+
         time.sleep(0.5)
         return {"branch": 2, "done": True}
 
     @driver.task(py=True)
     def branch_3():
         import time
+
         time.sleep(0.5)
         return {"branch": 3, "done": True}
 
     @driver.task(py=True)
     def branch_4():
         import time
+
         time.sleep(0.5)
         return {"branch": 4, "done": True}
 
@@ -107,9 +112,9 @@ def test_pool_stress() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: 5 parallel branches completed without pool exhaustion\n")
 
 

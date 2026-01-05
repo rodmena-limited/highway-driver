@@ -25,10 +25,11 @@ def test_fail_twice_pass_third() -> None:
     @driver.task(py=True, retries=3, retry_delay=1.0, backoff=1.0)
     def retry_task():
         import os
+
         flag_file = "/tmp/matrix_retry_flag.txt"
         attempt = 1
         if os.path.exists(flag_file):
-            with open(flag_file, "r") as f:
+            with open(flag_file) as f:
                 attempt = int(f.read().strip()) + 1
         os.makedirs(os.path.dirname(flag_file), exist_ok=True)
         with open(flag_file, "w") as f:
@@ -39,6 +40,7 @@ def test_fail_twice_pass_third() -> None:
 
     # Cleanup before test
     import os
+
     flag_file = "/tmp/matrix_retry_flag.txt"
     if os.path.exists(flag_file):
         os.remove(flag_file)
@@ -48,9 +50,9 @@ def test_fail_twice_pass_third() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Retry mechanism worked - succeeded on 3rd attempt\n")
 
 
@@ -67,11 +69,11 @@ def test_non_retryable_error() -> None:
 
     result = driver.run(wait=True, timeout=30)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
     # Note: Highway may or may not distinguish ValueError from RuntimeError
     # The test passes if it either fails or completes (depending on retry classification)
-    print("Result: %s (ValueError behavior documented)\n" % result.status)
+    print(f"Result: {result.status} (ValueError behavior documented)\n")
 
 
 def test_simple_retry_success() -> None:
@@ -80,13 +82,13 @@ def test_simple_retry_success() -> None:
 
     @driver.task(py=True, retries=2, retry_delay=1.0, backoff=2.0)
     def flaky_task():
-        import random
         import os
+
         # Use file to track attempts since we can't use ctx
         flag_file = "/tmp/matrix_flaky_flag.txt"
         attempt = 1
         if os.path.exists(flag_file):
-            with open(flag_file, "r") as f:
+            with open(flag_file) as f:
                 attempt = int(f.read().strip()) + 1
         with open(flag_file, "w") as f:
             f.write(str(attempt))
@@ -96,6 +98,7 @@ def test_simple_retry_success() -> None:
 
     # Cleanup before test
     import os
+
     flag_file = "/tmp/matrix_flaky_flag.txt"
     if os.path.exists(flag_file):
         os.remove(flag_file)
@@ -105,9 +108,9 @@ def test_simple_retry_success() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Retry with backoff succeeded\n")
 
 

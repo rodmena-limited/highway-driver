@@ -23,17 +23,23 @@ def main():
     @driver.task(shell=True, timeout=120)
     def phase_1():
         """First phase: 60 second task."""
-        return "echo 'Phase 1 started at $(date)' && sleep 60 && echo 'Phase 1 completed at $(date)'"
+        return (
+            "echo 'Phase 1 started at $(date)' && sleep 60 && echo 'Phase 1 completed at $(date)'"
+        )
 
     @driver.task(shell=True, depends=["phase_1"], timeout=120)
     def phase_2():
         """Second phase: 60 second task after phase_1."""
-        return "echo 'Phase 2 started at $(date)' && sleep 60 && echo 'Phase 2 completed at $(date)'"
+        return (
+            "echo 'Phase 2 started at $(date)' && sleep 60 && echo 'Phase 2 completed at $(date)'"
+        )
 
     @driver.task(shell=True, depends=["phase_2"], timeout=120)
     def phase_3():
         """Third phase: 60 second task after phase_2."""
-        return "echo 'Phase 3 started at $(date)' && sleep 60 && echo 'ALL PHASES COMPLETE at $(date)'"
+        return (
+            "echo 'Phase 3 started at $(date)' && sleep 60 && echo 'ALL PHASES COMPLETE at $(date)'"
+        )
 
     print("Submitting long-running workflow (~3 minutes)...")
     print("Workflow structure: phase_1 (60s) -> phase_2 (60s) -> phase_3 (60s)")
@@ -44,13 +50,13 @@ def main():
 
     print("Workflow submitted successfully!")
     print()
-    print("Run ID: %s" % handle.run_id)
-    print("Status: %s" % handle.status.state.value)
+    print(f"Run ID: {handle.run_id}")
+    print(f"Status: {handle.status.state.value}")
     print()
     print("Driver is exiting. Workflow continues running on Highway.")
     print()
     print("To check status, run:")
-    print("  python examples/long_running/check_status.py %s" % handle.run_id)
+    print(f"  python examples/long_running/check_status.py {handle.run_id}")
 
 
 if __name__ == "__main__":

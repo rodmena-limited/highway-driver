@@ -15,14 +15,14 @@ from typing import Any, TypeVar
 
 from highway.ast_utils import FunctionAnalyzer
 from highway.builder import DriverWorkflowBuilder
-from highway.client import HighwayClient
 from highway.exceptions import (
     ConfigurationError,
     ExecutionError,
     NotSupportedError,
     TaskDefinitionError,
 )
-from highway.result import TaskResult, WorkflowResult, WorkflowState, WorkflowStatus
+from highway.result import TaskResult, WorkflowResult, WorkflowState
+from highway.runner import StabilizeRunner
 from highway.task import TaskDefinition, TaskType
 
 logger = logging.getLogger(__name__)
@@ -86,31 +86,29 @@ class Driver:
         """
         self._name = name
         self.api_key = api_key or os.environ.get("HIGHWAY_API_KEY", "")
-        self.endpoint = endpoint or os.environ.get(
-            "HIGHWAY_API_ENDPOINT", "https://highway.run"
-        )
+        self.endpoint = endpoint or os.environ.get("HIGHWAY_API_ENDPOINT", "https://highway.run")
         self._tasks: dict[str, TaskDefinition] = {}
         self._analyzer = FunctionAnalyzer()
-        self._client: HighwayClient | None = None
+        self._runner: StabilizeRunner | None = None
 
     @property
     def tasks(self) -> dict[str, TaskDefinition]:
         """Get all registered tasks."""
         return self._tasks.copy()
 
-    def _get_client(self) -> HighwayClient:
-        """Get or create the Highway client."""
-        if self._client is None:
+    def _get_runner(self) -> StabilizeRunner:
+        """Get or create the Stabilize runner."""
+        if self._runner is None:
             if not self.api_key:
                 raise ConfigurationError(
                     "HIGHWAY_API_KEY not configured. "
                     "Set environment variable or pass api_key to Driver()"
                 )
-            self._client = HighwayClient(
+            self._runner = StabilizeRunner(
                 api_key=self.api_key,
-                endpoint=self.endpoint,
+                api_endpoint=self.endpoint,
             )
-        return self._client
+        return self._runner
 
     def task(
         self,
@@ -244,9 +242,7 @@ class Driver:
                 specified.append(f"workflow='{workflow}'")
             if workflow_id:
                 specified.append(f"workflow_id='{workflow_id}'")
-            raise TaskDefinitionError(
-                f"Only one task type allowed. Got: {', '.join(specified)}"
-            )
+            raise TaskDefinitionError(f"Only one task type allowed. Got: {', '.join(specified)}")
 
         # Check for unsupported features
         if run_at is not None:
@@ -283,9 +279,7 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError(
-                    f"Task '{func.__name__}' is already registered"
-                )
+                raise TaskDefinitionError(f"Task '{func.__name__}' is already registered")
 
             analysis = self._analyzer.analyze(func)
 
@@ -358,9 +352,7 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError(
-                    f"Task '{func.__name__}' is already registered"
-                )
+                raise TaskDefinitionError(f"Task '{func.__name__}' is already registered")
 
             analysis = self._analyzer.analyze(func)
 
@@ -417,9 +409,7 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError(
-                    f"Task '{func.__name__}' is already registered"
-                )
+                raise TaskDefinitionError(f"Task '{func.__name__}' is already registered")
 
             analysis = self._analyzer.analyze(func)
 
@@ -472,9 +462,7 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError(
-                    f"Task '{func.__name__}' is already registered"
-                )
+                raise TaskDefinitionError(f"Task '{func.__name__}' is already registered")
 
             task_def = TaskDefinition(
                 name=func.__name__,
@@ -527,9 +515,7 @@ class Driver:
 
         def decorator(func: F) -> F:
             if func.__name__ in self._tasks:
-                raise TaskDefinitionError(
-                    f"Task '{func.__name__}' is already registered"
-                )
+                raise TaskDefinitionError(f"Task '{func.__name__}' is already registered")
 
             task_def = TaskDefinition(
                 name=func.__name__,
@@ -607,36 +593,30 @@ class Driver:
         if inputs:
             workflow_json["variables"] = inputs
 
-        # Submit to Highway
-        client = self._get_client()
-        run_id = client.submit_workflow(
+        # Submit via Stabilize (provides durability, crash recovery, monitoring)
+        runner = self._get_runner()
+        exec_id = runner.submit(
             workflow_definition=workflow_json,
             inputs=inputs,
-            idempotency_key=workflow_id,
+            workflow_name=workflow_name,
         )
 
         if not wait:
             return WorkflowResult(
-                run_id=run_id,
+                run_id=exec_id,
                 status="running",
                 state=WorkflowState.RUNNING,
                 tasks={},
             )
 
-        # Wait for completion
+        # Wait for completion (polls local SQLite via Stabilize)
         try:
-            result = client.wait_for_completion(
-                run_id=run_id,
-                poll_interval=1.0,
-                timeout=timeout,
-            )
-
-            # Convert Highway response to WorkflowResult
-            return self._parse_highway_result(run_id, result)
+            result = runner.wait(exec_id, timeout=timeout)
+            return self._parse_stabilize_result(exec_id, result)
 
         except ExecutionError as e:
             return WorkflowResult(
-                run_id=run_id,
+                run_id=exec_id,
                 status="failed",
                 state=WorkflowState.FAILED,
                 error=str(e),
@@ -645,7 +625,7 @@ class Driver:
 
         except TimeoutError as e:
             return WorkflowResult(
-                run_id=run_id,
+                run_id=exec_id,
                 status="running",
                 state=WorkflowState.RUNNING,
                 error=str(e),
@@ -662,37 +642,36 @@ class Driver:
         else:
             return f"driver_workflow_{uuid.uuid4().hex[:8]}"
 
-    def _parse_highway_result(
-        self, run_id: str, highway_data: dict[str, Any]
+    def _parse_stabilize_result(
+        self, exec_id: str, stabilize_data: dict[str, Any]
     ) -> WorkflowResult:
-        """Parse Highway API response into WorkflowResult."""
-        # Highway uses "status" field, not "state"
-        state_str = highway_data.get("status", highway_data.get("state", "unknown"))
+        """Parse Stabilize runner result into WorkflowResult."""
+        # Map Stabilize status to our enum
+        status_str = stabilize_data.get("status", "unknown")
+        highway_status = stabilize_data.get("highway_status", status_str)
 
-        # Map Highway states to our enum
         state_map = {
             "completed": WorkflowState.COMPLETED,
+            "succeeded": WorkflowState.COMPLETED,
             "failed": WorkflowState.FAILED,
             "cancelled": WorkflowState.CANCELLED,
             "running": WorkflowState.RUNNING,
             "pending": WorkflowState.PENDING,
         }
-        state = state_map.get(state_str, WorkflowState.RUNNING)
+        state = state_map.get(highway_status, WorkflowState.RUNNING)
 
-        # Parse task results from Highway response
+        # Parse task results from Highway result stored in Stabilize
         tasks: dict[str, TaskResult] = {}
-        highway_result = highway_data.get("result", {})
+        highway_result = stabilize_data.get("highway_result", {})
 
         if isinstance(highway_result, dict):
             for task_name, task_data in highway_result.items():
                 if isinstance(task_data, dict):
                     # Highway wraps code execution results in {'result': actual_result, ...}
-                    # Unwrap to get the actual user result
                     actual_result = task_data
                     if "result" in task_data and isinstance(task_data.get("result"), dict):
                         actual_result = task_data["result"]
                     elif "result" in task_data and task_data.get("success"):
-                        # For code.exec, the inner result is the user's return value
                         actual_result = task_data["result"]
 
                     tasks[task_name] = TaskResult(
@@ -703,58 +682,83 @@ class Driver:
                     )
 
         return WorkflowResult(
-            run_id=run_id,
-            status=state_str,
+            run_id=exec_id,
+            status=highway_status,
             state=state,
             tasks=tasks,
-            error=highway_data.get("error"),
+            error=stabilize_data.get("error"),
         )
 
     def status(self, run_id: str) -> WorkflowResult:
-        """Get current status of a workflow.
+        """Get current status of a workflow from local store.
+
+        This uses the local SQLite database via Stabilize, avoiding
+        unnecessary Highway API calls.
 
         Args:
-            run_id: Highway workflow run ID
+            run_id: Stabilize execution ID (returned from run())
 
         Returns:
             WorkflowResult with current state
         """
-        client = self._get_client()
-        result = client.get_status(run_id)
-        return self._parse_highway_result(run_id, result)
+        runner = self._get_runner()
+        result = runner.status(run_id)
+        return self._parse_stabilize_result(run_id, result)
 
     def cancel(self, run_id: str) -> bool:
         """Cancel a running workflow.
 
         Args:
-            run_id: Workflow run ID
+            run_id: Stabilize execution ID
 
         Returns:
-            True if cancellation was successful
+            True if cancellation was initiated
         """
-        client = self._get_client()
-        return client.cancel_workflow(run_id)
+        runner = self._get_runner()
+        return runner.cancel(run_id)
+
+    def list_workflows(
+        self,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[WorkflowResult]:
+        """List workflows from local store.
+
+        This uses the local SQLite database via Stabilize for fast
+        queries without calling the Highway API.
+
+        Args:
+            status: Filter by status (running/succeeded/failed)
+            limit: Maximum number of workflows to return
+
+        Returns:
+            List of WorkflowResult objects
+        """
+        runner = self._get_runner()
+        workflows = runner.list_workflows(status=status, limit=limit)
+        return [self._parse_stabilize_result(wf["execution_id"], wf) for wf in workflows]
 
     def logs(self, run_id: str) -> list[dict[str, Any]]:
         """Get logs for a workflow run.
 
+        Note: Stabilize stores workflow state but not execution logs.
+        This method returns an empty list. For detailed logs, check
+        the Highway API directly or use Highway's dashboard.
+
         Args:
-            run_id: Highway workflow run ID
+            run_id: Stabilize execution ID
 
         Returns:
-            List of log entries
+            Empty list (logs not available via Stabilize)
         """
-        client = self._get_client()
-        status = client.get_status(run_id)
-        # Extract logs from status if available
-        return status.get("logs", [])
+        return []
 
     def start_workflow(
         self,
         timeout: float = 300,
         workflow_id: str | None = None,
         inputs: dict[str, Any] | None = None,
-    ) -> "WorkflowHandle":
+    ) -> WorkflowHandle:
         """Start workflow and return handle immediately.
 
         This is the preferred way to run workflows asynchronously.
@@ -779,7 +783,7 @@ class Driver:
         result = self.run(wait=False, timeout=timeout, workflow_id=workflow_id, inputs=inputs)
         return WorkflowHandle(run_id=result.run_id, driver=self, timeout=timeout)
 
-    def retrieve_workflow(self, run_id: str, timeout: float = 300) -> "WorkflowHandle":
+    def retrieve_workflow(self, run_id: str, timeout: float = 300) -> WorkflowHandle:
         """Get handle for an existing workflow.
 
         Allows monitoring workflows started in previous sessions or
@@ -827,9 +831,7 @@ class Driver:
         Returns:
             Dict mapping function name to callable
         """
-        return {
-            t.name: t.func for t in self._tasks.values() if t.durable and not t.package
-        }
+        return {t.name: t.func for t in self._tasks.values() if t.durable and not t.package}
 
     def get_package_dirs(self) -> dict[str, tuple[str, str]]:
         """Get package directories that need packaging.

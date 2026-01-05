@@ -18,7 +18,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
-from highway.result import WorkflowResult, WorkflowState
+from highway.result import WorkflowResult
 
 if TYPE_CHECKING:
     from highway.driver import Driver

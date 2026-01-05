@@ -27,6 +27,7 @@ def test_diamond_pattern() -> None:
     @driver.task(py=True, depends=["task_a"])
     def task_b():
         import time
+
         time.sleep(0.5)  # Simulate work
         return {"task": "B", "order": 2}
 
@@ -34,6 +35,7 @@ def test_diamond_pattern() -> None:
     @driver.task(py=True, depends=["task_a"])
     def task_c():
         import time
+
         time.sleep(0.3)  # Shorter than B
         return {"task": "C", "order": 2}
 
@@ -48,7 +50,7 @@ def test_diamond_pattern() -> None:
         return {
             "pattern": "A → (B, C) → D",
             "status": "diamond_ok",
-            "execution_order_correct": True
+            "execution_order_correct": True,
         }
 
     print("=== Test: diamond_pattern ===")
@@ -61,9 +63,9 @@ def test_diamond_pattern() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Diamond pattern executed correctly\n")
 
 
@@ -75,18 +77,21 @@ def test_nested_parallel() -> None:
     @driver.task(py=True)
     def outer1_task0():
         import time
+
         time.sleep(0.2)
         return {"outer": 1, "inner": 0}
 
     @driver.task(py=True)
     def outer1_task1():
         import time
+
         time.sleep(0.2)
         return {"outer": 1, "inner": 1}
 
     @driver.task(py=True)
     def outer1_task2():
         import time
+
         time.sleep(0.2)
         return {"outer": 1, "inner": 2}
 
@@ -94,26 +99,36 @@ def test_nested_parallel() -> None:
     @driver.task(py=True)
     def outer2_task0():
         import time
+
         time.sleep(0.2)
         return {"outer": 2, "inner": 0}
 
     @driver.task(py=True)
     def outer2_task1():
         import time
+
         time.sleep(0.2)
         return {"outer": 2, "inner": 1}
 
     @driver.task(py=True)
     def outer2_task2():
         import time
+
         time.sleep(0.2)
         return {"outer": 2, "inner": 2}
 
     # Wait for all 6 tasks
-    @driver.task(py=True, depends=[
-        "outer1_task0", "outer1_task1", "outer1_task2",
-        "outer2_task0", "outer2_task1", "outer2_task2"
-    ])
+    @driver.task(
+        py=True,
+        depends=[
+            "outer1_task0",
+            "outer1_task1",
+            "outer1_task2",
+            "outer2_task0",
+            "outer2_task1",
+            "outer2_task2",
+        ],
+    )
     def verify_nested():
         return {"total_completed": 6, "status": "nested_ok"}
 
@@ -122,9 +137,9 @@ def test_nested_parallel() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Nested parallel groups completed\n")
 
 
@@ -153,9 +168,9 @@ def test_linear_chain() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Linear chain executed in order\n")
 
 

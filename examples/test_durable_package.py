@@ -45,13 +45,13 @@ def test_package_with_cross_imports() -> None:
     # 3. Execute main:run_calculation with DurableContext
     result = driver.run(wait=True, timeout=120, inputs={"a": 15, "b": 7})
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
 
     if result.status == "completed":
         print("PASSED: Package executed successfully")
     else:
-        print("Note: Status %s (may need Highway engine support)" % result.status)
+        print(f"Note: Status {result.status} (may need Highway engine support)")
 
 
 def test_while_loop_with_durable_context() -> None:
@@ -65,6 +65,7 @@ def test_while_loop_with_durable_context() -> None:
     def init():
         # NEW PATTERN: No ctx param, use get_context()
         from driver_tasks.highway_context import get_context
+
         ctx = get_context()
         ctx.set_variable("counter", 0)
         ctx.set_variable("limit", 5)
@@ -74,6 +75,7 @@ def test_while_loop_with_durable_context() -> None:
     def increment():
         # NEW PATTERN: No ctx param, use get_context()
         from driver_tasks.highway_context import get_context
+
         ctx = get_context()
         counter = ctx.get_variable("counter", 0)
         ctx.set_variable("counter", counter + 1)
@@ -83,6 +85,7 @@ def test_while_loop_with_durable_context() -> None:
     def verify():
         # NEW PATTERN: No ctx param, use get_context()
         from driver_tasks.highway_context import get_context
+
         ctx = get_context()
         final = ctx.get_variable("counter")
         return {"final_counter": final, "success": final == 5}
@@ -92,13 +95,13 @@ def test_while_loop_with_durable_context() -> None:
 
     result = driver.run(wait=True, timeout=120)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
 
     if result.status == "completed":
         print("PASSED: While loop with get_context() completed")
     else:
-        print("Note: Status %s (may need Highway engine support)" % result.status)
+        print(f"Note: Status {result.status} (may need Highway engine support)")
 
 
 def test_simple_durable_function() -> None:
@@ -121,6 +124,7 @@ def test_simple_durable_function() -> None:
     def without_ctx_param():
         # Import get_context() from the packaged module
         from driver_tasks.highway_context import get_context
+
         ctx = get_context()
         ctx.set_variable("pattern2", "get_context")
         return {"pattern": "get_context", "value": ctx.get_variable("pattern2")}
@@ -143,13 +147,13 @@ def test_simple_durable_function() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
 
     if result.status == "completed":
         print("PASSED: Both ctx patterns work correctly")
     else:
-        print("Note: Status %s (may need Highway engine support)" % result.status)
+        print(f"Note: Status {result.status} (may need Highway engine support)")
 
 
 def run_all() -> None:

@@ -8,6 +8,8 @@ Tests that AST decorator stripping works correctly with:
 - Complex data structures
 """
 
+from datetime import UTC
+
 from highway import Driver
 
 driver = Driver()
@@ -22,7 +24,7 @@ def analyze_system():
     import sys
     from collections import Counter
     from dataclasses import dataclass
-    from datetime import datetime, timezone
+    from datetime import datetime
     from functools import reduce
 
     @dataclass
@@ -52,7 +54,7 @@ def analyze_system():
         architecture=platform.machine(),
         processor=platform.processor() or "unknown",
         env_count=len(os.environ),
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
     )
 
     # Analyze environment variable patterns

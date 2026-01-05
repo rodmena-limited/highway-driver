@@ -103,12 +103,31 @@ def test_parallel_counter() -> None:
         return {"branch": 19, "value": 1}
 
     # Final task depends on all 20 - this is the "join" point
-    @driver.task(py=True, depends=[
-        "counter_0", "counter_1", "counter_2", "counter_3", "counter_4",
-        "counter_5", "counter_6", "counter_7", "counter_8", "counter_9",
-        "counter_10", "counter_11", "counter_12", "counter_13", "counter_14",
-        "counter_15", "counter_16", "counter_17", "counter_18", "counter_19"
-    ])
+    @driver.task(
+        py=True,
+        depends=[
+            "counter_0",
+            "counter_1",
+            "counter_2",
+            "counter_3",
+            "counter_4",
+            "counter_5",
+            "counter_6",
+            "counter_7",
+            "counter_8",
+            "counter_9",
+            "counter_10",
+            "counter_11",
+            "counter_12",
+            "counter_13",
+            "counter_14",
+            "counter_15",
+            "counter_16",
+            "counter_17",
+            "counter_18",
+            "counter_19",
+        ],
+    )
     def verify_counter():
         return {"total_branches": 20, "status": "all_completed"}
 
@@ -117,9 +136,9 @@ def test_parallel_counter() -> None:
 
     result = driver.run(wait=True, timeout=120)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: 20 parallel branches completed\n")
 
 
@@ -134,16 +153,12 @@ def test_event_coordination() -> None:
     @driver.emit(
         event="matrix_test_event",
         payload={"source": "emitter", "data": "test_payload"},
-        depends=["setup"]
+        depends=["setup"],
     )
     def emit_event():
         pass  # Marker function
 
-    @driver.wait_for(
-        event="matrix_test_event",
-        timeout=30,
-        depends=["emit_event"]
-    )
+    @driver.wait_for(event="matrix_test_event", timeout=30, depends=["emit_event"])
     def wait_event():
         pass  # Marker function
 
@@ -156,10 +171,10 @@ def test_event_coordination() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
     # Event coordination may not be fully supported yet
-    print("Result: %s (event coordination behavior documented)\n" % result.status)
+    print(f"Result: {result.status} (event coordination behavior documented)\n")
 
 
 def test_checkpoint_conflict() -> None:
@@ -174,6 +189,7 @@ def test_checkpoint_conflict() -> None:
     @driver.task(py=True, depends=["init_shared"])
     def branch_a():
         import time
+
         time.sleep(0.1)  # Small delay
         return {"written_by": "branch_a", "value": "A"}
 
@@ -181,25 +197,23 @@ def test_checkpoint_conflict() -> None:
     @driver.task(py=True, depends=["init_shared"])
     def branch_b():
         import time
+
         time.sleep(0.05)  # Slightly faster
         return {"written_by": "branch_b", "value": "B"}
 
     # Wait for both branches
     @driver.task(py=True, depends=["branch_a", "branch_b"])
     def verify_conflict():
-        return {
-            "status": "conflict_resolved",
-            "both_completed": True
-        }
+        return {"status": "conflict_resolved", "both_completed": True}
 
     print("=== Test: checkpoint_conflict ===")
     print("Running 2 parallel branches competing for state...")
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: Parallel conflict handled\n")
 
 
@@ -211,68 +225,89 @@ def test_fork_join_stress() -> None:
     @driver.task(py=True)
     def fork_0():
         import time
+
         time.sleep(0.1)
         return {"fork": 0, "completed": True}
 
     @driver.task(py=True)
     def fork_1():
         import time
+
         time.sleep(0.15)
         return {"fork": 1, "completed": True}
 
     @driver.task(py=True)
     def fork_2():
         import time
+
         time.sleep(0.2)
         return {"fork": 2, "completed": True}
 
     @driver.task(py=True)
     def fork_3():
         import time
+
         time.sleep(0.12)
         return {"fork": 3, "completed": True}
 
     @driver.task(py=True)
     def fork_4():
         import time
+
         time.sleep(0.18)
         return {"fork": 4, "completed": True}
 
     @driver.task(py=True)
     def fork_5():
         import time
+
         time.sleep(0.08)
         return {"fork": 5, "completed": True}
 
     @driver.task(py=True)
     def fork_6():
         import time
+
         time.sleep(0.22)
         return {"fork": 6, "completed": True}
 
     @driver.task(py=True)
     def fork_7():
         import time
+
         time.sleep(0.14)
         return {"fork": 7, "completed": True}
 
     @driver.task(py=True)
     def fork_8():
         import time
+
         time.sleep(0.11)
         return {"fork": 8, "completed": True}
 
     @driver.task(py=True)
     def fork_9():
         import time
+
         time.sleep(0.16)
         return {"fork": 9, "completed": True}
 
     # Join all forks
-    @driver.task(py=True, depends=[
-        "fork_0", "fork_1", "fork_2", "fork_3", "fork_4",
-        "fork_5", "fork_6", "fork_7", "fork_8", "fork_9"
-    ])
+    @driver.task(
+        py=True,
+        depends=[
+            "fork_0",
+            "fork_1",
+            "fork_2",
+            "fork_3",
+            "fork_4",
+            "fork_5",
+            "fork_6",
+            "fork_7",
+            "fork_8",
+            "fork_9",
+        ],
+    )
     def verify_join():
         return {"branches_completed": 10, "status": "all_joined"}
 
@@ -281,9 +316,9 @@ def test_fork_join_stress() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     print("PASSED: All 10 forks joined successfully\n")
 
 

@@ -35,10 +35,10 @@ def test_delay_execution() -> None:
     result = driver.run(wait=True, timeout=60)
     elapsed = time.time() - start
 
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     assert result.run_id is not None
     # Should take at least 5 seconds due to WaitOperator
-    assert elapsed >= 5.0, "Expected at least 5s delay, got %.1fs" % elapsed
+    assert elapsed >= 5.0, f"Expected at least 5s delay, got {elapsed:.1f}s"
 
 
 def test_delay_no_dependencies() -> None:
@@ -54,4 +54,4 @@ def test_delay_no_dependencies() -> None:
     elapsed = time.time() - start
 
     assert result.status == "completed"
-    assert elapsed >= 3.0, "Expected at least 3s delay, got %.1fs" % elapsed
+    assert elapsed >= 3.0, f"Expected at least 3s delay, got {elapsed:.1f}s"

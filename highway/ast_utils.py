@@ -84,7 +84,7 @@ class FunctionAnalyzer:
         try:
             source = inspect.getsource(func)
         except (OSError, TypeError) as e:
-            raise ValueError("Cannot get source for function '%s': %s" % (func.__name__, e))
+            raise ValueError(f"Cannot get source for function '{func.__name__}': {e}")
 
         # Dedent to handle nested functions or class methods
         source = textwrap.dedent(source)
@@ -92,12 +92,12 @@ class FunctionAnalyzer:
         try:
             tree = ast.parse(source)
         except SyntaxError as e:
-            raise ValueError("Cannot parse source for function '%s': %s" % (func.__name__, e))
+            raise ValueError(f"Cannot parse source for function '{func.__name__}': {e}")
 
         func_def = self._find_function_def(tree, func.__name__)
         if func_def is None:
             raise ValueError(
-                "Could not find function definition for '%s' in parsed AST" % func.__name__
+                f"Could not find function definition for '{func.__name__}' in parsed AST"
             )
 
         try:
@@ -185,9 +185,9 @@ class FunctionAnalyzer:
 
         # Also include *args and **kwargs names if present
         if func_def.args.vararg:
-            params.append("*%s" % func_def.args.vararg.arg)
+            params.append(f"*{func_def.args.vararg.arg}")
         if func_def.args.kwarg:
-            params.append("**%s" % func_def.args.kwarg.arg)
+            params.append(f"**{func_def.args.kwarg.arg}")
 
         return params
 

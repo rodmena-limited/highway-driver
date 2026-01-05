@@ -11,7 +11,6 @@ import pytest
 
 from highway import Driver, TaskDefinitionError
 
-
 # =============================================================================
 # TaskDefinition Validation Tests
 # =============================================================================
@@ -339,10 +338,12 @@ def test_wrapper_generation_handles_ctx_detection() -> None:
         return {"order_id": order_id, "ctx_present": True}
 
     # Package them
-    result = package_functions({
-        "without_ctx": without_ctx,
-        "with_ctx": with_ctx,
-    })
+    result = package_functions(
+        {
+            "without_ctx": without_ctx,
+            "with_ctx": with_ctx,
+        }
+    )
 
     # Extract and test
     tmpdir = tempfile.mkdtemp()

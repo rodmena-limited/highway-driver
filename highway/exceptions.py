@@ -82,9 +82,9 @@ class NotSupportedError(HighwayDriverError):
     """
 
     def __init__(self, feature: str, issue_ref: str = ""):
-        msg = "Feature '%s' is not yet supported" % feature
+        msg = f"Feature '{feature}' is not yet supported"
         if issue_ref:
-            msg += ". Track: %s" % issue_ref
+            msg += f". Track: {issue_ref}"
         super().__init__(msg)
         self.feature = feature
         self.issue_ref = issue_ref

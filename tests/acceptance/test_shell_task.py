@@ -27,6 +27,6 @@ def test_shell_task_execution() -> None:
 
     result = driver.run(wait=True, timeout=60)
 
-    assert result.status == "completed", "Expected completed, got %s" % result.status
+    assert result.status == "completed", f"Expected completed, got {result.status}"
     assert result.run_id is not None, "run_id should be set"
     assert result.state.value == "completed"

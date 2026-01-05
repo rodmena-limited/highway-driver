@@ -75,7 +75,7 @@ def package_directory(
     source_dir = os.path.abspath(source_dir)
 
     if not os.path.isdir(source_dir):
-        raise ValueError("Source directory does not exist: %s" % source_dir)
+        raise ValueError(f"Source directory does not exist: {source_dir}")
 
     # Use original package name by default (no renaming)
     original_package_name = os.path.basename(source_dir.rstrip("/"))
@@ -216,7 +216,7 @@ def package_functions(
         file_path=zip_path,
         content_hash=content_hash,
         package_name=package_name,
-        entrypoint="tasks:_hw_%s" % first_func,  # Wrapper function
+        entrypoint=f"tasks:_hw_{first_func}",  # Wrapper function
     )
 
 
@@ -246,31 +246,31 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
     """
     lines = [
         '"""Auto-generated tasks module from highway-driver.',
-        '',
-        'Contains original functions and wrapper functions (_hw_*).',
-        'Engine calls wrappers; wrappers handle ctx injection.',
-        '',
-        'Durable Sleep: time.sleep() calls are transformed to _durable_sleep()',
-        'which persists sleep state across restarts.',
+        "",
+        "Contains original functions and wrapper functions (_hw_*).",
+        "Engine calls wrappers; wrappers handle ctx injection.",
+        "",
+        "Durable Sleep: time.sleep() calls are transformed to _durable_sleep()",
+        "which persists sleep state across restarts.",
         '"""',
-        '',
-        'from __future__ import annotations',
-        '',
-        'import inspect as _inspect',
-        'from typing import TYPE_CHECKING, Any',
-        '',
-        '# Import context helper from same package',
-        'from . import highway_context as _hc',
-        '',
-        'if TYPE_CHECKING:',
-        '    from highway_engine.durable_context import DurableContext',
-        '',
-        '',
-        '# === Durable Sleep Helper ===',
+        "",
+        "from __future__ import annotations",
+        "",
+        "import inspect as _inspect",
+        "from typing import TYPE_CHECKING, Any",
+        "",
+        "# Import context helper from same package",
+        "from . import highway_context as _hc",
+        "",
+        "if TYPE_CHECKING:",
+        "    from highway_engine.durable_context import DurableContext",
+        "",
+        "",
+        "# === Durable Sleep Helper ===",
         get_durable_sleep_helper().strip(),
-        '',
-        '',
-        '# === User Functions (with time.sleep() transformed) ===',
+        "",
+        "",
+        "# === User Functions (with time.sleep() transformed) ===",
     ]
 
     for func_name, func in functions.items():
@@ -279,23 +279,21 @@ def _generate_tasks_module(functions: dict[str, Callable[..., Any]]) -> str:
             # Strip decorators and apply durable transforms
             cleaned_source = _strip_decorators_and_transform(source, func_name)
             lines.append(cleaned_source)
-            lines.append('')
-            lines.append('')
+            lines.append("")
+            lines.append("")
 
             # Generate wrapper function
             wrapper_source = _generate_wrapper(func_name)
             lines.append(wrapper_source)
-            lines.append('')
-            lines.append('')
+            lines.append("")
+            lines.append("")
 
             logger.debug("Generated wrapper _hw_%s for function %s", func_name, func_name)
 
         except (OSError, TypeError) as e:
-            raise ValueError(
-                "Cannot extract source for function '%s': %s" % (func_name, e)
-            )
+            raise ValueError(f"Cannot extract source for function '{func_name}': {e}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def _generate_wrapper(func_name: str) -> str:
@@ -414,15 +412,15 @@ def _strip_decorators(source: str, func_name: str) -> str:
     try:
         tree = ast.parse(source)
     except SyntaxError as e:
-        raise ValueError("Cannot parse source for '%s': %s" % (func_name, e))
+        raise ValueError(f"Cannot parse source for '{func_name}': {e}")
 
     if not tree.body:
-        raise ValueError("Empty source for function '%s'" % func_name)
+        raise ValueError(f"Empty source for function '{func_name}'")
 
     node = tree.body[0]
 
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        raise ValueError("Expected function definition for '%s'" % func_name)
+        raise ValueError(f"Expected function definition for '{func_name}'")
 
     # Remove all decorators - signature stays unchanged
     node.decorator_list = []
@@ -455,15 +453,15 @@ def _strip_decorators_and_transform(source: str, func_name: str) -> str:
     try:
         tree = ast.parse(source)
     except SyntaxError as e:
-        raise ValueError("Cannot parse source for '%s': %s" % (func_name, e))
+        raise ValueError(f"Cannot parse source for '{func_name}': {e}")
 
     if not tree.body:
-        raise ValueError("Empty source for function '%s'" % func_name)
+        raise ValueError(f"Empty source for function '{func_name}'")
 
     node = tree.body[0]
 
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        raise ValueError("Expected function definition for '%s'" % func_name)
+        raise ValueError(f"Expected function definition for '{func_name}'")
 
     # Remove all decorators - signature stays unchanged
     node.decorator_list = []
@@ -519,7 +517,7 @@ def _rewrite_imports(
                     node.module = new_package
                 else:
                     # old_package.submodule -> new_package.submodule
-                    suffix = node.module[len(old_package):]
+                    suffix = node.module[len(old_package) :]
                     node.module = new_package + suffix
             return node
 
@@ -530,7 +528,7 @@ def _rewrite_imports(
                     if alias.name == old_package:
                         alias.name = new_package
                     else:
-                        suffix = alias.name[len(old_package):]
+                        suffix = alias.name[len(old_package) :]
                         alias.name = new_package + suffix
             return node
 

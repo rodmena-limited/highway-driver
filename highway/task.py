@@ -88,11 +88,11 @@ class TaskDefinition:
         if self.retries < 0:
             raise ValueError("retries must be non-negative, got %d" % self.retries)
         if self.retry_delay < 0:
-            raise ValueError("retry_delay must be non-negative, got %s" % self.retry_delay)
+            raise ValueError(f"retry_delay must be non-negative, got {self.retry_delay}")
         if self.backoff_rate < 1.0:
-            raise ValueError("backoff_rate must be >= 1.0, got %s" % self.backoff_rate)
+            raise ValueError(f"backoff_rate must be >= 1.0, got {self.backoff_rate}")
         if self.delay is not None and self.delay.total_seconds() <= 0:
-            raise ValueError("delay must be positive, got %s" % self.delay)
+            raise ValueError(f"delay must be positive, got {self.delay}")
         # Validate durable/package/entrypoint
         if self.package is not None:
             if not self.durable:
@@ -101,12 +101,12 @@ class TaskDefinition:
                 raise ValueError("package= requires entrypoint= (e.g., 'main:run_func')")
             if ":" not in self.entrypoint:
                 raise ValueError(
-                    "entrypoint must be in 'module:function' format, got '%s'" % self.entrypoint
+                    f"entrypoint must be in 'module:function' format, got '{self.entrypoint}'"
                 )
 
     def get_result_key(self) -> str:
         """Get the result key for this task in Highway workflow."""
-        return "%s_result" % self.name
+        return f"{self.name}_result"
 
     def validate_depends(self, available_tasks: set[str]) -> list[str]:
         """Validate that all dependencies exist.
@@ -121,6 +121,6 @@ class TaskDefinition:
         for dep in self.depends:
             if dep not in available_tasks:
                 errors.append(
-                    "Task '%s' depends on '%s' which is not registered" % (self.name, dep)
+                    f"Task '{self.name}' depends on '{dep}' which is not registered"
                 )
         return errors

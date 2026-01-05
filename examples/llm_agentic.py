@@ -67,14 +67,14 @@ def main():
 
     result = driver.run(wait=True, timeout=300)
 
-    print("Status: %s" % result.status)
-    print("Run ID: %s" % result.run_id)
+    print(f"Status: {result.status}")
+    print(f"Run ID: {result.run_id}")
     print()
 
     if result.tasks:
         for task_name, task_result in result.tasks.items():
             print("=" * 60)
-            print("Task: %s" % task_name)
+            print(f"Task: {task_name}")
             print("=" * 60)
 
             if task_result.result:
@@ -83,12 +83,12 @@ def main():
 
                 # HTTP task results
                 if "status_code" in res:
-                    print("HTTP Status: %s" % res.get("status_code"))
+                    print("HTTP Status: {}".format(res.get("status_code")))
                     body = res.get("body", "")
                     if isinstance(body, str) and len(body) > 200:
-                        print("Body: %s..." % body[:200])
+                        print(f"Body: {body[:200]}...")
                     else:
-                        print("Body: %s" % body)
+                        print(f"Body: {body}")
 
                 # LLM task results
                 elif "response" in res:
@@ -97,13 +97,13 @@ def main():
 
                 # Shell/other results
                 elif "stdout" in res:
-                    print("Output: %s" % res.get("stdout", "").strip())
+                    print("Output: {}".format(res.get("stdout", "").strip()))
 
                 else:
-                    print("Result: %s" % res)
+                    print(f"Result: {res}")
 
             if task_result.error:
-                print("Error: %s" % task_result.error)
+                print(f"Error: {task_result.error}")
 
             print()
 

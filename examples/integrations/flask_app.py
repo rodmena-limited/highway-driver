@@ -24,8 +24,8 @@ import json
 import logging
 import os
 import time
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Generator
 
 import requests
 from flask import Flask, Response, jsonify, request
@@ -47,7 +47,7 @@ class HighwayClient:
     def __init__(self, api_endpoint: str, api_key: str):
         self.api_endpoint = api_endpoint.rstrip("/")
         self.headers = {
-            "Authorization": "Bearer %s" % api_key,
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         # Session with connection pooling (thread-safe)
@@ -63,7 +63,7 @@ class HighwayClient:
     def submit(self, workflow_definition: dict, inputs: dict | None = None) -> dict:
         """Submit workflow (non-blocking)."""
         response = self.session.post(
-            "%s/api/v1/workflows" % self.api_endpoint,
+            f"{self.api_endpoint}/api/v1/workflows",
             json={
                 "workflow_definition": workflow_definition,
                 "inputs": inputs or {},
@@ -77,7 +77,7 @@ class HighwayClient:
     def status(self, workflow_run_id: str) -> dict:
         """Get workflow status."""
         response = self.session.get(
-            "%s/api/v1/workflows/%s" % (self.api_endpoint, workflow_run_id),
+            f"{self.api_endpoint}/api/v1/workflows/{workflow_run_id}",
             headers=self.headers,
             timeout=30,
         )
@@ -87,7 +87,7 @@ class HighwayClient:
     def cancel(self, workflow_run_id: str) -> dict:
         """Cancel running workflow."""
         response = self.session.post(
-            "%s/api/v1/workflows/%s/cancel" % (self.api_endpoint, workflow_run_id),
+            f"{self.api_endpoint}/api/v1/workflows/{workflow_run_id}/cancel",
             headers=self.headers,
             timeout=30,
         )
@@ -104,14 +104,12 @@ class HighwayClient:
             if status.get("status") in ("completed", "failed", "cancelled"):
                 return status
             time.sleep(poll_interval)
-        raise TimeoutError(
-            "Workflow %s did not complete within %ss" % (workflow_run_id, timeout)
-        )
+        raise TimeoutError(f"Workflow {workflow_run_id} did not complete within {timeout}s")
 
     def stream_events(self, workflow_run_id: str) -> Generator[dict, None, None]:
         """Stream workflow events via SSE."""
         response = self.session.get(
-            "%s/api/v1/workflows/%s/stream" % (self.api_endpoint, workflow_run_id),
+            f"{self.api_endpoint}/api/v1/workflows/{workflow_run_id}/stream",
             headers={**self.headers, "Accept": "text/event-stream"},
             stream=True,
             timeout=None,
@@ -196,15 +194,15 @@ def stream_status(workflow_run_id: str):
     def generate() -> Generator[str, None, None]:
         try:
             for event in highway_client.stream_events(workflow_run_id):
-                yield "data: %s\n\n" % json.dumps(event)
+                yield f"data: {json.dumps(event)}\n\n"
 
                 if event.get("status") in ("completed", "failed", "cancelled"):
                     break
         except requests.HTTPError as e:
-            yield "data: %s\n\n" % json.dumps({"error": str(e)})
+            yield "data: {}\n\n".format(json.dumps({"error": str(e)}))
         except Exception as e:
             logger.exception("SSE stream error")
-            yield "data: %s\n\n" % json.dumps({"error": str(e)})
+            yield "data: {}\n\n".format(json.dumps({"error": str(e)}))
 
     return Response(
         generate(),
